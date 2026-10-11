@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
+from geopy.distance import geodesic
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -111,6 +112,7 @@ class InterceptionSolver:
         self,
         track: _TrackRow,
         chokepoint_lonlat: Tuple[float, float],
+        travel_time_cache: Optional[Dict[str, Any]] = None,
     ) -> float:
         """
         Eikonal arrival time from the track's last known point to the chokepoint
@@ -118,24 +120,35 @@ class InterceptionSolver:
         """
         lon, lat = track.last_known_point
         cp_lon, cp_lat = chokepoint_lonlat
-        try:
-            friction, _transform, side = await self._spatial.get_friction_surface_window(
-                lon,
-                lat,
-                ISOCHRONE_RADIUS_M,
-                track.object_class,
-            )
-        except Exception as exc:
-            logger.debug("Friction window failed, using velocity fallback: %s", exc)
+        dist_m = geodesic((lat, lon), (cp_lat, cp_lon)).meters
+        if dist_m > ISOCHRONE_RADIUS_M:
             return self._velocity_fallback_eta_s(track, chokepoint_lonlat)
 
-        kappa = CLASS_HEADING_KAPPA.get(track.object_class, 1.0)
-        times = solve_travel_time_grid(
-            friction,
-            cell_size_m=ISOCHRONE_CELL_SIZE_M,
-            heading_deg=track.estimated_heading_deg,
-            kappa=kappa,
-        )
+        if travel_time_cache is not None and "times" in travel_time_cache:
+            times = travel_time_cache["times"]
+            side = travel_time_cache["side"]
+        else:
+            try:
+                friction, _transform, side = await self._spatial.get_friction_surface_window(
+                    lon,
+                    lat,
+                    ISOCHRONE_RADIUS_M,
+                    track.object_class,
+                )
+                kappa = CLASS_HEADING_KAPPA.get(track.object_class, 1.0)
+                times = solve_travel_time_grid(
+                    friction,
+                    cell_size_m=ISOCHRONE_CELL_SIZE_M,
+                    heading_deg=track.estimated_heading_deg,
+                    kappa=kappa,
+                )
+                if travel_time_cache is not None:
+                    travel_time_cache["times"] = times
+                    travel_time_cache["side"] = side
+            except Exception as exc:
+                logger.debug("Friction window failed, using velocity fallback: %s", exc)
+                return self._velocity_fallback_eta_s(track, chokepoint_lonlat)
+
         center_r, center_c = lonlat_to_grid_cell(
             lon, lat, lon, lat, side, ISOCHRONE_CELL_SIZE_M
         )
@@ -175,12 +188,16 @@ class InterceptionSolver:
             chokepoints = await self._spatial.get_chokepoints()
 
         evaluations: List[_ChokepointEval] = []
+        cache: Dict[str, Any] = {}
         for cp in chokepoints:
             if not cp.get("is_accessible_to_response", True):
                 continue
             cp_id = cp["id"] if isinstance(cp["id"], UUID) else UUID(str(cp["id"]))
             location = cp["location"]
-            target_s = await self.target_travel_time_seconds(track, location)
+            try:
+                target_s = await self.target_travel_time_seconds(track, location, travel_time_cache=cache)
+            except TypeError:
+                target_s = await self.target_travel_time_seconds(track, location)
             route = await find_shortest_route(
                 interceptor_position,
                 location,

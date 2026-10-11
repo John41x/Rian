@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from aiosmtpd.controller import Controller
-from aiosmtpd.smtp import Envelope, Session, SMTP
+from aiosmtpd.smtp import AuthResult, Envelope, Session, SMTP
 
 from src.common.config import settings
 from src.common.schemas import DetectionEventInbound
@@ -18,6 +18,14 @@ from src.ingestion.queue import enqueue_inbound, get_ingestion_queue
 logger = logging.getLogger(__name__)
 
 SMTP_SUCCESS = "250 Message accepted for delivery"
+
+
+def camera_authenticator(server: SMTP, session: Session, envelope: Envelope, mechanism: str, auth_data: Any) -> AuthResult:
+    """
+    Accepts SMTP AUTH credentials from edge cameras (Reolink Go Plus, Vosker, Cuddeback).
+    Standalone cellular cameras require a non-empty password in their firmware setup.
+    """
+    return AuthResult(success=True)
 
 
 class CameraSMTPHandler:
@@ -84,9 +92,11 @@ class SMTPIngestionController:
             self.handler,
             hostname=self.host,
             port=self.port,
+            authenticator=camera_authenticator,
+            auth_require_tls=False,
         )
         self._controller.start()
-        logger.info("SMTP ingestion daemon listening on %s:%s", self.host, self.port)
+        logger.info("SMTP ingestion daemon listening on %s:%s (AUTH enabled)", self.host, self.port)
 
     def stop(self) -> None:
         if self._controller is None:

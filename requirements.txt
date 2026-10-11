@@ -19,11 +19,12 @@ geoalchemy2>=0.14.4
 shapely>=2.0.3
 
 # Mathematical, Geospatial & Scientific
-numpy>=1.26.4
+numpy>=1.26.4,<2.0.0
 scipy>=1.12.0
 geopy>=2.4.1
 Pillow>=10.2.0
 rasterio>=1.3.9
+opencv-python>=4.8.0,<4.11.0
 
 # Inference
 ultralytics>=8.1.0

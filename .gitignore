@@ -17,6 +17,8 @@ data/
 *.sqlite
 *.tif
 *.tiff
+*.pt
+*.onnx
 
 # OS
 .DS_Store

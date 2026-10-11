@@ -48,3 +48,10 @@ async def test_smtp_handler_acks_without_image(synthetic_jpeg_bytes):
 
     assert response == SMTP_SUCCESS
     assert queue.empty()
+
+
+def test_camera_authenticator_accepts_credentials():
+    from src.ingestion.smtp_server import camera_authenticator
+
+    res = camera_authenticator(None, None, None, "LOGIN", None)
+    assert res.success is True

@@ -275,6 +275,22 @@ class TrackAssociator:
             best_score = 0.0
 
             for track in tracks:
+                gate = evaluate_spatiotemporal_gate(
+                    track.last_lon,
+                    track.last_lat,
+                    track.last_detected_at,
+                    detection.detection_lon,
+                    detection.detection_lat,
+                    detection.detection_time,
+                    detection.object_class,
+                )
+                if not gate.reachable:
+                    continue
+
+                p_visual = visual_association_probability(detection.object_class, track.object_class)
+                if p_visual <= 0:
+                    continue
+
                 if friction_override is not None:
                     center_lon, center_lat = friction_center or (
                         (track.last_lon + detection.detection_lon) / 2.0,

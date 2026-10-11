@@ -80,6 +80,13 @@ def solve_travel_time_grid(
 
     heap: List[Tuple[float, int, int]] = [(0.0, center_r, center_c)]
     neighbors = ((0, 1), (0, -1), (1, 0), (-1, 0))
+    if heading_deg is not None:
+        weights = {
+            (dr, dc): von_mises_direction_weight(math.atan2(dc, -dr), heading_deg, kappa)
+            for dr, dc in neighbors
+        }
+    else:
+        weights = {(dr, dc): 1.0 for dr, dc in neighbors}
 
     while heap:
         current_t, r, c = heapq.heappop(heap)
@@ -92,11 +99,8 @@ def solve_travel_time_grid(
             s = friction[nr, nc]
             if not np.isfinite(s) or s <= 0:
                 continue
-            edge_cost = s * cell_size_m
-            if heading_deg is not None:
-                azimuth = math.atan2(dc, -dr)
-                w = von_mises_direction_weight(azimuth, heading_deg, kappa)
-                edge_cost /= max(w, 1e-9)
+            w = weights[(dr, dc)]
+            edge_cost = (s * cell_size_m) / max(w, 1e-9)
             new_t = current_t + edge_cost
             if new_t < times[nr, nc]:
                 times[nr, nc] = new_t
@@ -127,6 +131,13 @@ def travel_time_between_cells(
     times[from_row, from_col] = 0.0
     heap: List[Tuple[float, int, int]] = [(0.0, from_row, from_col)]
     neighbors = ((0, 1), (0, -1), (1, 0), (-1, 0))
+    if heading_deg is not None:
+        weights = {
+            (dr, dc): von_mises_direction_weight(math.atan2(dc, -dr), heading_deg, kappa)
+            for dr, dc in neighbors
+        }
+    else:
+        weights = {(dr, dc): 1.0 for dr, dc in neighbors}
 
     while heap:
         current_t, r, c = heapq.heappop(heap)
@@ -141,11 +152,8 @@ def travel_time_between_cells(
             s = friction[nr, nc]
             if not np.isfinite(s) or s <= 0:
                 continue
-            edge_cost = s * cell_size_m
-            if heading_deg is not None:
-                azimuth = math.atan2(dc, -dr)
-                w = von_mises_direction_weight(azimuth, heading_deg, kappa)
-                edge_cost /= max(w, 1e-9)
+            w = weights[(dr, dc)]
+            edge_cost = (s * cell_size_m) / max(w, 1e-9)
             new_t = current_t + edge_cost
             if new_t < times[nr, nc]:
                 times[nr, nc] = new_t
@@ -187,51 +195,41 @@ def extract_reachability_contour(
         lon, lat = center_lon, center_lat
         return geom.Point(lon, lat).buffer(1e-6)
 
-    side = travel_times.shape[0]
     mask = np.isfinite(travel_times) & (travel_times <= elapsed_seconds)
     if not np.any(mask):
         return None
 
-    polygons: List[geom.Polygon] = []
-    rows, cols = travel_times.shape
-    for r in range(rows - 1):
-        for c in range(cols - 1):
-            corners = (
-                mask[r, c],
-                mask[r, c + 1],
-                mask[r + 1, c + 1],
-                mask[r + 1, c],
-            )
-            if not any(corners):
-                continue
-            if all(corners):
-                ring = [
-                    _grid_index_to_lonlat(center_lon, center_lat, r, c, side, cell_size_m),
-                    _grid_index_to_lonlat(center_lon, center_lat, r, c + 1, side, cell_size_m),
-                    _grid_index_to_lonlat(center_lon, center_lat, r + 1, c + 1, side, cell_size_m),
-                    _grid_index_to_lonlat(center_lon, center_lat, r + 1, c, side, cell_size_m),
-                    _grid_index_to_lonlat(center_lon, center_lat, r, c, side, cell_size_m),
-                ]
-                polygons.append(geom.Polygon(ring))
-                continue
+    try:
+        from rasterio.features import shapes
+        from rasterio.transform import from_origin
+        from shapely.geometry import shape as to_shape
 
-            # Partial cell: approximate with center point if any corner is reachable
-            if any(corners):
-                buff_deg = cell_size_m / 111_320.0
-                for rr, cc in ((r, c), (r, c + 1), (r + 1, c + 1), (r + 1, c)):
-                    if mask[rr, cc]:
-                        lon, lat = _grid_index_to_lonlat(
-                            center_lon, center_lat, rr, cc, side, cell_size_m
-                        )
-                        polygons.append(geom.Point(lon, lat).buffer(buff_deg * 0.45))
+        side = travel_times.shape[0]
+        half = (side - 1) / 2.0
+        m_per_deg_lat = 111_320.0
+        m_per_deg_lon = m_per_deg_lat * math.cos(math.radians(center_lat))
 
-    if not polygons:
-        return None
+        west_lon = center_lon - (half * cell_size_m) / m_per_deg_lon
+        north_lat = center_lat + (half * cell_size_m) / m_per_deg_lat
+        res_x = cell_size_m / m_per_deg_lon
+        res_y = cell_size_m / m_per_deg_lat
 
-    merged = unary_union(polygons)
-    if merged.is_empty:
-        return None
-    return merged
+        transform = from_origin(west_lon, north_lat, res_x, res_y)
+        geoms = [
+            to_shape(g)
+            for g, val in shapes(mask.astype(np.uint8), mask=mask, transform=transform)
+            if val == 1
+        ]
+        if not geoms:
+            return None
+        merged = unary_union(geoms)
+        if merged.is_empty:
+            return None
+        return merged
+    except Exception as exc:
+        logger.debug("Vectorized contour extraction fallback: %s", exc)
+        lon, lat = center_lon, center_lat
+        return geom.Point(lon, lat).buffer(cell_size_m / 111320.0)
 
 
 def geometry_to_geojson_coordinates(
