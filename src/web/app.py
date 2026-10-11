@@ -5,8 +5,10 @@ FastAPI Common Operating Picture (COP) dashboard and REST/SSE APIs (spec 04 §5)
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 from uuid import UUID
@@ -19,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database import async_session_factory
 from src.common.schemas import PointLonLat
+from src.ingestion.webhook_server import router as webhook_router
 from src.spatial.routing import find_shortest_route, RouteResult
 from src.spatial.service import SpatialService
 
@@ -51,8 +54,26 @@ class CopState(BaseModel):
     generated_at: datetime
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if os.environ.get("RIAN_START_ENGINE", "0") == "1":
+        from src.engine import get_engine
+
+        engine = get_engine()
+        engine.interceptor_position_provider = lambda: _interceptor_position
+        engine.cop_broadcast = _broadcast_sse
+        await engine.start()
+        try:
+            yield
+        finally:
+            await engine.stop()
+    else:
+        yield
+
+
 def create_app() -> FastAPI:
-    application = FastAPI(title="Rian COP", version="1.0.0")
+    application = FastAPI(title="Rian COP", version="1.0.0", lifespan=lifespan)
+    application.include_router(webhook_router)
 
     @application.get("/", response_class=HTMLResponse)
     @application.get("/cop", response_class=HTMLResponse)
