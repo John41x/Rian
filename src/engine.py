@@ -125,7 +125,7 @@ class RianEngine:
 
         await self.ingestion.start()
         if self.worker:
-            await self.worker.start()
+            self.worker.start()
 
         if self.smtp_controller:
             try:

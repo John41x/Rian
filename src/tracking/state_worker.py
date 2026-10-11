@@ -174,10 +174,16 @@ class TrackStateWorker:
     def start(self) -> asyncio.Task:
         if self._task and not self._task.done():
             return self._task
-        self._task = asyncio.create_task(self.run())
+        self._stop_event.clear()
+        self._task = asyncio.create_task(self.run(), name="track-state-worker")
         return self._task
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         self._stop_event.set()
         if self._task and not self._task.done():
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
