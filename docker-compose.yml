@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  db:
+    image: kartoza/postgis:16-3.4
+    container_name: rian_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=rian
+      - POSTGRES_USER=rian
+      - POSTGRES_PASS=rian_secret_password
+      - POSTGRES_PORT=5432
+      - ALLOW_IP_RANGE=0.0.0.0/0
+      - FORCE_SSL=FALSE
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=rian_secret_password psql -h localhost -U rian -d rian -c 'SELECT 1;'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgis_data:

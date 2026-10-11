@@ -28,12 +28,12 @@ This repository is organized to allow multiple specialized subagents to work in 
 
 | Spec ID | Module Name | Target Path | Dependencies | Status | Assigned Agent / Role |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **00** | Contracts & Schemas | `specs/00-contracts-and-schemas.md` | None | `READY` | Orchestrator Core |
-| **01** | Ingestion & CV Inference | `specs/01-ingestion-inference.md` | Spec 00 | `READY` | Ingestion Agent |
-| **02** | Spatial Database & Rasters | `specs/02-spatial-database-rasters.md` | Spec 00 | `READY` | Geospatial DB Agent |
-| **03** | Kinematic Tracking Engine | `specs/03-kinematic-tracking-engine.md` | Spec 00, 02 | `READY` | Algorithm & Math Agent |
+| **00** | Contracts & Schemas | `specs/00-contracts-and-schemas.md` | None | `VERIFIED` | Orchestrator Core |
+| **01** | Ingestion & CV Inference | `specs/01-ingestion-inference.md` | Spec 00 | `VERIFIED` | Ingestion Agent |
+| **02** | Spatial Database & Rasters | `specs/02-spatial-database-rasters.md` | Spec 00 | `VERIFIED` | Geospatial DB Agent |
+| **03** | Kinematic Tracking Engine | `specs/03-kinematic-tracking-engine.md` | Spec 00, 02 | `IN_PROGRESS` | Algorithm & Math Agent |
 | **04** | Interception & Dispatch | `specs/04-tactical-interception-dispatch.md` | Spec 00, 02, 03 | `READY` | Tactical Dispatch Agent |
-| **05** | Simulation & Validation Harness | `specs/05-simulation-harness.md` | Spec 00 | `READY` | QA & Simulation Agent |
+| **05** | Simulation & Validation Harness | `specs/05-simulation-harness.md` | Spec 00 | `VERIFIED` | QA & Simulation Agent |
 
 ### Status Definitions
 - `DRAFT`: Under specification; not ready for agent implementation.

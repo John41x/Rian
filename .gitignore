@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Environment & Credentials
+.env
+.env.*
+!.env.example
+
+# Database & Storage
+data/
+*.db
+*.sqlite
+*.tif
+*.tiff
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-data/
