@@ -10,21 +10,108 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from pydantic import BaseModel, Field
 
 from src.common.config import settings
+from src.common.domains import DomainProfile, get_domain_profile
 from src.dispatch.guards import (
     apply_output_evidence_guards,
     build_fenced_evidence,
+    collect_verified_entity_names,
+    fence_text_entity_references,
     sanitize_cop_state_for_prompt,
     sanitize_operator_query,
 )
+from src.spatial.routing import _haversine_m
+from src.spatial.zones import ZoneManager
 
 logger = logging.getLogger("rian.llm_copilot")
+
+# Demo ranch / terminal outer envelope (WGS84) for perimeter proximity heuristics.
+_DEMO_PERIMETER_BOUNDS = {
+    "west": -119.835,
+    "east": -119.805,
+    "south": 36.735,
+    "north": 36.758,
+}
+
+
+class EntityTrackNotFoundError(LookupError):
+    """Raised when a requested track_id is absent from COP telemetry."""
+
+
+ENTITY_INSIGHT_JSON_SCHEMA_HINT = """
+Return a single JSON object with exactly these keys:
+track_id (string),
+track_code (string),
+entity_class (string),
+risk_level (string),
+current_zone (string),
+headline (string),
+insight (string, 2-4 sentences of operational diagnostic),
+recommended_actions (array of strings),
+telemetry (object with speed_kmh, heading_deg, elapsed_seconds, uncertainty_radius_m),
+provider (string).
+Only reference track codes and chokepoint names present in the supplied entity context.
+"""
+
+
+def compute_entity_uncertainty_m(elapsed_seconds: float, confidence: Optional[float]) -> float:
+    """Kinematic observation uncertainty radius (spec 15 / spec 14 visualization)."""
+    elapsed = max(0.0, float(elapsed_seconds))
+    conf = float(confidence if confidence is not None else 0.5)
+    conf_clamped = min(1.0, max(0.1, conf))
+    return 15.0 + 3.5 * math.sqrt(elapsed) * (1.0 - conf_clamped)
+
+
+def distance_to_demo_perimeter_m(lon: float, lat: float) -> float:
+    """Minimum distance in meters from a point to the demo property outer fence envelope."""
+    b = _DEMO_PERIMETER_BOUNDS
+    west_m = _haversine_m(lon, lat, b["west"], lat)
+    east_m = _haversine_m(lon, lat, b["east"], lat)
+    south_m = _haversine_m(lon, lat, lon, b["south"])
+    north_m = _haversine_m(lon, lat, lon, b["north"])
+    return min(west_m, east_m, south_m, north_m)
+
+
+def build_entity_diagnostic_system_prompt(profile: DomainProfile) -> str:
+    """Domain-tailored system prompt for single-entity diagnostics (spec 15)."""
+    if profile.profile_type == "ranch_livestock":
+        persona = (
+            "You are an experienced Ranch Manager diagnosing animal welfare, stray herd separation, "
+            "highway fence breach risk, dehydration, and water trough access. "
+        )
+    elif profile.profile_type == "industrial_terminal":
+        persona = (
+            "You are a Port Facility Security Officer diagnosing unauthorized container yard movement, "
+            "off-hours prowling, and cargo tampering risk near restricted bays. "
+        )
+    else:
+        persona = profile.persona_system_prompt + " "
+    return (
+        persona
+        + profile.persona_system_prompt
+        + " "
+        + ENTITY_INSIGHT_JSON_SCHEMA_HINT
+    )
+
+
+class EntityDiagnosticResponse(BaseModel):
+    track_id: str
+    track_code: str
+    entity_class: str
+    risk_level: str
+    current_zone: str
+    headline: str
+    insight: str
+    recommended_actions: List[str]
+    telemetry: Dict[str, Any]
+    provider: str
 
 
 def _normalize_api_key(value: Optional[str]) -> Optional[str]:
@@ -231,6 +318,298 @@ class TacticalCopilot:
                 logger.warning("Anthropic query failed, falling back to local reasoner: %s", e)
 
         return self._local_heuristic_query(safe_query, cop_state)
+
+    @staticmethod
+    def _find_track_by_id(track_id: str, cop_state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        needle = str(track_id).strip()
+        for track in cop_state.get("tracks") or []:
+            tid = track.get("track_id") or track.get("id")
+            if tid is not None and str(tid) == needle:
+                return track
+        return None
+
+    @staticmethod
+    def _nearest_chokepoint(
+        lon: float, lat: float, chokepoints: List[Dict[str, Any]]
+    ) -> Tuple[Optional[Dict[str, Any]], float]:
+        best: Optional[Dict[str, Any]] = None
+        best_dist = float("inf")
+        for cp in chokepoints:
+            loc = cp.get("location")
+            if not loc or len(loc) < 2:
+                continue
+            dist = _haversine_m(lon, lat, float(loc[0]), float(loc[1]))
+            if dist < best_dist:
+                best_dist = dist
+                best = cp
+        if best is None:
+            return None, 0.0
+        return best, best_dist
+
+    def _apply_entity_insight_guards(
+        self, parsed: Dict[str, Any], cop_state: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        tracks, chokepoints, _ = collect_verified_entity_names(cop_state)
+        cp_frozen = frozenset(chokepoints)
+        track_frozen = frozenset(tracks)
+        guarded = dict(parsed)
+        for field in ("headline", "insight", "risk_level"):
+            if field in guarded and isinstance(guarded[field], str):
+                fenced, _ = fence_text_entity_references(
+                    guarded[field], cp_frozen, track_frozen
+                )
+                guarded[field] = fenced
+        actions = guarded.get("recommended_actions") or []
+        if isinstance(actions, list):
+            fenced_actions: List[str] = []
+            for action in actions:
+                if isinstance(action, str):
+                    fenced, _ = fence_text_entity_references(
+                        action, cp_frozen, track_frozen
+                    )
+                    fenced_actions.append(fenced)
+            guarded["recommended_actions"] = fenced_actions
+        return guarded
+
+    def _entity_telemetry(
+        self, track: Dict[str, Any], uncertainty_m: float
+    ) -> Dict[str, Any]:
+        speed_ms = float(track.get("estimated_velocity_ms") or 0.0)
+        heading = track.get("estimated_heading_deg")
+        elapsed = float(track.get("elapsed_seconds") or track.get("age_seconds") or 0.0)
+        return {
+            "speed_kmh": round(speed_ms * 3.6, 2),
+            "heading_deg": float(heading) if heading is not None else 0.0,
+            "elapsed_seconds": int(elapsed),
+            "uncertainty_radius_m": round(uncertainty_m, 1),
+        }
+
+    async def generate_entity_insight(
+        self, track_id: str, cop_state: Dict[str, Any]
+    ) -> EntityDiagnosticResponse:
+        """Synthesize a focused operational diagnostic for one active entity (spec 15)."""
+        track = self._find_track_by_id(track_id, cop_state)
+        if track is None:
+            raise EntityTrackNotFoundError(f"Track {track_id} not found in active COP telemetry")
+
+        profile = get_domain_profile()
+        zone_manager = ZoneManager(profile.profile_type)
+        point = track.get("last_known_point") or []
+        if len(point) < 2:
+            raise EntityTrackNotFoundError(f"Track {track_id} has no valid position")
+
+        lon, lat = float(point[0]), float(point[1])
+        zone_feature = zone_manager.find_zone_for_point(lon, lat)
+        current_zone = (
+            zone_feature["properties"]["name"] if zone_feature else "Unassigned / Exterior"
+        )
+
+        confidence = track.get("confidence_score")
+        elapsed = float(track.get("elapsed_seconds") or track.get("age_seconds") or 0.0)
+        uncertainty_m = compute_entity_uncertainty_m(elapsed, confidence)
+        perimeter_m = distance_to_demo_perimeter_m(lon, lat)
+        chokepoints = cop_state.get("chokepoints") or []
+        nearest_cp, cp_dist_m = self._nearest_chokepoint(lon, lat, chokepoints)
+
+        entity_context = {
+            "track": track,
+            "current_zone": current_zone,
+            "perimeter_distance_m": round(perimeter_m, 1),
+            "nearest_chokepoint": (
+                {
+                    "name": nearest_cp.get("name"),
+                    "distance_m": round(cp_dist_m, 1),
+                }
+                if nearest_cp
+                else None
+            ),
+            "telemetry": self._entity_telemetry(track, uncertainty_m),
+            "operation_profile": profile.profile_type,
+            "verified_chokepoints": [
+                cp.get("name") for cp in chokepoints if cp.get("name")
+            ],
+        }
+
+        if self.provider == "deepseek":
+            try:
+                return await self._call_deepseek_entity_insight(
+                    track,
+                    entity_context,
+                    cop_state,
+                    current_zone,
+                    uncertainty_m,
+                    profile,
+                )
+            except Exception as e:
+                logger.warning(
+                    "DeepSeek entity insight failed, falling back to local reasoner: %s", e
+                )
+
+        return self._local_entity_insight(
+            track,
+            cop_state,
+            current_zone,
+            uncertainty_m,
+            perimeter_m,
+            nearest_cp,
+            cp_dist_m,
+            profile,
+        )
+
+    async def _call_deepseek_entity_insight(
+        self,
+        track: Dict[str, Any],
+        entity_context: Dict[str, Any],
+        cop_state: Dict[str, Any],
+        current_zone: str,
+        uncertainty_m: float,
+        profile: DomainProfile,
+    ) -> EntityDiagnosticResponse:
+        system = build_entity_diagnostic_system_prompt(profile)
+        safe_context = sanitize_cop_state_for_prompt(entity_context)
+        user_content = json.dumps(safe_context, default=str)
+        data = await self.call_deepseek_chat(
+            messages=[
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": f"Entity diagnostic context JSON:\n{user_content}",
+                },
+            ],
+            temperature=0.25,
+        )
+        raw = data["choices"][0]["message"]["content"]
+        parsed = json.loads(raw)
+        parsed = self._apply_entity_insight_guards(parsed, cop_state)
+        tid = str(track.get("track_id") or track.get("id") or "")
+        telemetry = self._entity_telemetry(track, uncertainty_m)
+        provider_label = (
+            f"DeepSeek-V3 ({profile.app_title})"
+            if "ranch" in profile.profile_type or "terminal" in profile.profile_type
+            else f"DeepSeek ({self.model})"
+        )
+        return EntityDiagnosticResponse(
+            track_id=tid,
+            track_code=str(track.get("track_code") or "UNKNOWN"),
+            entity_class=str(track.get("object_class") or "unknown"),
+            risk_level=str(parsed.get("risk_level") or profile.status_nominal),
+            current_zone=current_zone,
+            headline=str(parsed.get("headline") or "Entity diagnostic"),
+            insight=str(parsed.get("insight") or ""),
+            recommended_actions=list(parsed.get("recommended_actions") or []),
+            telemetry=telemetry,
+            provider=str(parsed.get("provider") or provider_label),
+        )
+
+    def _local_entity_insight(
+        self,
+        track: Dict[str, Any],
+        cop_state: Dict[str, Any],
+        current_zone: str,
+        uncertainty_m: float,
+        perimeter_m: float,
+        nearest_cp: Optional[Dict[str, Any]],
+        cp_dist_m: float,
+        profile: DomainProfile,
+    ) -> EntityDiagnosticResponse:
+        track_code = str(track.get("track_code") or "UNKNOWN")
+        entity_class = str(track.get("object_class") or "unknown")
+        tid = str(track.get("track_id") or track.get("id") or "")
+        telemetry = self._entity_telemetry(track, uncertainty_m)
+        speed_kmh = telemetry["speed_kmh"]
+        heading = telemetry["heading_deg"]
+        cp_name = (nearest_cp or {}).get("name") or "nearest access node"
+
+        near_perimeter = perimeter_m < 120.0
+        if near_perimeter:
+            risk_level = (
+                profile.status_warning
+                if "ADVISORY" in profile.status_warning
+                else "ADVISORY // BOUNDARY PROXIMITY"
+            )
+        else:
+            risk_level = "NOMINAL // GRAZING" if profile.profile_type == "ranch_livestock" else profile.status_nominal
+
+        if profile.profile_type == "ranch_livestock":
+            if near_perimeter:
+                headline = "Cattle Boundary Proximity & Fence-Line Drift"
+                insight = (
+                    f"{track_code} ({entity_class}) is operating in {current_zone} "
+                    f"approximately {perimeter_m:.0f}m from the outer fence envelope, "
+                    f"moving at {speed_kmh:.1f} km/h on heading {heading:.0f}°. "
+                    f"Nearest pasture gate ({cp_name}) is {cp_dist_m:.0f}m away — verify latch "
+                    f"and water trough access if drift continues."
+                )
+                actions = [
+                    f"Task pasture ATV to verify latch at {cp_name}.",
+                    "Herd entity back toward central grazing meadow.",
+                    "Check water trough availability in adjacent paddocks.",
+                ]
+            else:
+                headline = "Pasture Grazing Nominal"
+                insight = (
+                    f"{track_code} is grazing in {current_zone} with perimeter standoff "
+                    f"{perimeter_m:.0f}m. Speed {speed_kmh:.1f} km/h, heading {heading:.0f}°. "
+                    f"No immediate fence breach or dehydration indicators from telemetry."
+                )
+                actions = [
+                    "Continue passive herd monitoring.",
+                    f"Log routine check at {cp_name} during next pasture rotation.",
+                ]
+        elif profile.profile_type == "industrial_terminal":
+            if near_perimeter:
+                headline = "Unauthorized Yard Movement Near Perimeter"
+                risk_level = profile.status_warning
+                insight = (
+                    f"Track {track_code} ({entity_class}) detected in {current_zone} "
+                    f"{perimeter_m:.0f}m from terminal perimeter at {speed_kmh:.1f} km/h. "
+                    f"Nearest security checkpoint {cp_name} is {cp_dist_m:.0f}m — assess cargo "
+                    f"tampering risk and off-hours yard authorization."
+                )
+                actions = [
+                    f"Dispatch security unit to {cp_name} for visual verification.",
+                    "Review container bay CCTV for tailgating or forced entry.",
+                ]
+            else:
+                headline = "Yard Motion Within Nominal Patrol Envelope"
+                insight = (
+                    f"{track_code} moving inside {current_zone} at {speed_kmh:.1f} km/h. "
+                    f"Perimeter offset {perimeter_m:.0f}m; no immediate restricted-bay breach."
+                )
+                actions = [
+                    "Maintain CCTV tracking on container rows.",
+                    "Correlate badge access logs for authorized personnel.",
+                ]
+        else:
+            headline = f"Entity {track_code} — Situational Update"
+            insight = (
+                f"{track_code} in {current_zone}; speed {speed_kmh:.1f} km/h, "
+                f"perimeter offset {perimeter_m:.0f}m."
+            )
+            actions = ["Continue monitoring per site security protocol."]
+
+        guarded = self._apply_entity_insight_guards(
+            {
+                "headline": headline,
+                "insight": insight,
+                "risk_level": risk_level,
+                "recommended_actions": actions,
+            },
+            cop_state,
+        )
+
+        return EntityDiagnosticResponse(
+            track_id=tid,
+            track_code=track_code,
+            entity_class=entity_class,
+            risk_level=str(guarded["risk_level"]),
+            current_zone=current_zone,
+            headline=str(guarded["headline"]),
+            insight=str(guarded["insight"]),
+            recommended_actions=list(guarded["recommended_actions"]),
+            telemetry=telemetry,
+            provider=f"local_entity_reasoner ({profile.app_title})",
+        )
 
     async def call_deepseek_chat(
         self,

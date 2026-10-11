@@ -127,3 +127,16 @@ CREATE TABLE IF NOT EXISTS elevation_rasters (
     filename VARCHAR(128)
 );
 CREATE INDEX IF NOT EXISTS idx_elevation_rasters_rast ON elevation_rasters USING GIST(ST_ConvexHull(rast));
+
+-- 8. Spatial operation zones (pastures, yards, arrays — spec 13)
+CREATE TABLE IF NOT EXISTS spatial_zones (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(64) NOT NULL,
+    zone_code VARCHAR(32) UNIQUE NOT NULL,
+    zone_type VARCHAR(32) NOT NULL,
+    boundary GEOMETRY(Polygon, 4326) NOT NULL,
+    properties JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_spatial_zones_boundary ON spatial_zones USING GIST(boundary);

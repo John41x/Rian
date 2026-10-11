@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     TWILIO_FROM_NUMBER: str = "+15555555555"
     DISPATCH_PHONE_NUMBERS: str = "+15555555556"
 
+    # Domain profile (spec 13): ranch_livestock | industrial_terminal | critical_infrastructure
+    OPERATION_PROFILE: str = "ranch_livestock"
+
     # Mapbox
     MAPBOX_ACCESS_TOKEN: Optional[str] = None
 

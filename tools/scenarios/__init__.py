@@ -3,9 +3,11 @@
 from tools.scenarios.vehicle_intrusion import run as run_vehicle_intrusion
 from tools.scenarios.pedestrian_hike import run as run_pedestrian_hike
 from tools.scenarios.multi_target_gating import run as run_multi_target_gating
+from tools.scenarios.stray_cow import run as run_stray_cow
 
 SCENARIOS = {
     "vehicle_intrusion": run_vehicle_intrusion,
     "pedestrian_hike": run_pedestrian_hike,
     "multi_target_gating": run_multi_target_gating,
+    "stray_cow": run_stray_cow,
 }

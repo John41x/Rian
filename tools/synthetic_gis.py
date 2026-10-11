@@ -28,6 +28,16 @@ DOMAIN_SIZE_M = 10_000.0
 RANCH_CENTER_LON = -119.8200
 RANCH_CENTER_LAT = 36.7450
 
+# Compact COP demo estate (~800m–1200m) aligned with domain profile pastures (spec 14)
+COMPACT_DEMO_CENTER_LON = -119.8200
+COMPACT_DEMO_CENTER_LAT = 36.7465
+COMPACT_DEMO_TRAIL: Tuple[Tuple[float, float], ...] = (
+    (-119.8200, 36.7540),
+    (-119.8200, 36.7480),
+    (-119.8200, 36.7420),
+    (-119.8200, 36.7370),
+)
+
 DEM_OUTPUT_PATH = Path("data/rasters/synthetic_dem.tif")
 
 M_PER_DEG_LAT = 111_320.0

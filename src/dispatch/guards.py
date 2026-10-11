@@ -42,7 +42,7 @@ def _name_from_record(record: Dict[str, Any], *keys: str) -> Optional[str]:
 
 
 def collect_verified_entity_names(cop_state: Dict[str, Any]) -> Tuple[Set[str], Set[str], Set[str]]:
-    """Return (track_codes, chokepoint_names, sensor_names) present in telemetry."""
+    """Return (track_codes, chokepoint_names, sensor_names) present in telemetry and spatial zones."""
     tracks: Set[str] = set()
     chokepoints: Set[str] = set()
     sensors: Set[str] = set()
@@ -56,6 +56,21 @@ def collect_verified_entity_names(cop_state: Dict[str, Any]) -> Tuple[Set[str], 
         name = _name_from_record(cp, "name", "chokepoint_name")
         if name:
             chokepoints.add(name)
+
+    # Include verified named spatial zones (pastures, paddocks, yards)
+    for z in cop_state.get("zones") or []:
+        name = z.get("name") or (z.get("properties") or {}).get("name")
+        if name:
+            chokepoints.add(str(name))
+
+    try:
+        from src.spatial.zones import ZoneManager
+        for z in ZoneManager().list_zones():
+            props = z.get("properties") or {}
+            if props.get("name"):
+                chokepoints.add(str(props["name"]))
+    except Exception:
+        pass
 
     for directive in cop_state.get("directives") or []:
         name = _name_from_record(directive, "chokepoint_name")

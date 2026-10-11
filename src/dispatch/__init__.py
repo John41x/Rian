@@ -3,12 +3,17 @@
 from src.dispatch.alerter import TwilioAlerter
 from src.dispatch.cot_emitter import CotBroadcaster, CotMessageBuilder
 from src.dispatch.interception import InterceptionSolver, TACTICAL_MARGIN_SECONDS
-from src.dispatch.llm_copilot import TacticalCopilot, TacticalSitrepReport
+from src.dispatch.llm_copilot import (
+    EntityDiagnosticResponse,
+    TacticalCopilot,
+    TacticalSitrepReport,
+)
 
 __all__ = [
     "CotBroadcaster",
     "CotMessageBuilder",
     "InterceptionSolver",
+    "EntityDiagnosticResponse",
     "TacticalCopilot",
     "TacticalSitrepReport",
     "TwilioAlerter",

@@ -42,6 +42,9 @@ This repository is organized to allow multiple specialized subagents to work in 
 | **10** | Authentication & Access Control | `specs/10-authentication-rbac.md` | Spec 00 | `VERIFIED` | Core Backend Agent |
 | **11** | Camera Provisioning & Fleet Admin | `specs/11-admin-camera-provisioning.md` | Spec 00, 10 | `VERIFIED` | Web & Operations Agent |
 | **12** | Benchmarking & SLA Monitoring | `specs/12-benchmarking-sla-dashboard.md` | Spec 00, 10, 11 | `VERIFIED` | QA & Metrics Agent |
+| **13** | Modular Domain Profiles & Spatial Zones | `specs/13-modular-domain-profiles.md` | Spec 00, 02 | `VERIFIED` | Geospatial DB & Routing Agent |
+| **14** | Dynamic Kinematic Visualization & Halos | `specs/14-dynamic-kinematic-visualization.md` | Spec 00, 04, 13 | `VERIFIED` | Web & Operations Agent |
+| **15** | Entity-Targeted LLM Diagnostics | `specs/15-entity-targeted-llm-diagnostics.md` | Spec 00, 09, 13 | `VERIFIED` | Intelligence & LLM Agent |
 
 ### Status Definitions
 - `DRAFT`: Under specification; not ready for agent implementation.

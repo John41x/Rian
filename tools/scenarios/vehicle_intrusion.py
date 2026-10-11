@@ -13,7 +13,7 @@ from src.common.config import settings
 from src.common.schemas import EntityClass
 from tools.kinematics import estimate_tactical_margin_seconds, road_travel_time_seconds
 from tools.mock_camera import MockCameraEmitter
-from tools.synthetic_gis import SENSOR_NODES, local_m_to_lonlat
+from tools.synthetic_gis import COMPACT_DEMO_TRAIL, SENSOR_NODES, local_m_to_lonlat
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,9 @@ def run(emit_smtp: bool = True) -> dict:
         )
 
     north_lon, north_lat = local_m_to_lonlat(*NORTH_GATE_XY)
+    # Compact COP map: place truck on visible pasture corridor (spec 14)
+    demo_lon, demo_lat = COMPACT_DEMO_TRAIL[0]
+    track_lon, track_lat = demo_lon - 0.004, demo_lat
     now = datetime.now(timezone.utc)
 
     with psycopg.connect(settings.sync_database_url) as conn:
@@ -74,9 +77,10 @@ def run(emit_smtp: bool = True) -> dict:
                 """
                 INSERT INTO entity_tracks
                     (track_code, object_class, current_status, first_detected_at,
-                     last_detected_at, last_sensor_id, last_known_point, estimated_velocity_ms)
+                     last_detected_at, last_sensor_id, last_known_point,
+                     estimated_heading_deg, estimated_velocity_ms, confidence_score)
                 VALUES (%s, %s, 'ACTIVE', %s, %s, %s,
-                        ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s)
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -85,9 +89,11 @@ def run(emit_smtp: bool = True) -> dict:
                     now,
                     now,
                     sensor[0],
-                    north_lon,
-                    north_lat,
+                    track_lon,
+                    track_lat,
+                    180.0,
                     truck_speed_kmh / 3.6,
+                    0.92,
                 ),
             ).fetchone()[0]
 

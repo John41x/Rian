@@ -99,6 +99,9 @@ def create_app() -> FastAPI:
     from src.web.sla_service import sla_router
 
     application.include_router(sla_router)
+    from src.web.zone_routes import router as zone_router
+
+    application.include_router(zone_router)
 
     @application.get("/", response_class=HTMLResponse)
     @application.get("/cop", response_class=HTMLResponse)
@@ -317,6 +320,19 @@ def create_app() -> FastAPI:
         answer = await copilot.answer_operator_query(query, state.model_dump(mode="json"))
         return {"query": query, "response": answer, "provider": copilot.provider}
 
+    @application.post("/api/v1/cop/entity/{track_id}/insight")
+    async def entity_insight_endpoint(track_id: str):
+        from src.dispatch.llm_copilot import EntityTrackNotFoundError, TacticalCopilot
+
+        state = await build_cop_state()
+        copilot = TacticalCopilot()
+        try:
+            return await copilot.generate_entity_insight(
+                track_id, state.model_dump(mode="json")
+            )
+        except EntityTrackNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     return application
 
 
@@ -445,19 +461,22 @@ async def _fetch_tracks(
     sql = text(
         """
         SELECT
-            id,
-            track_code,
-            object_class,
-            current_status,
-            ST_X(last_known_point) AS lon,
-            ST_Y(last_known_point) AS lat,
-            estimated_heading_deg,
-            estimated_velocity_ms,
-            confidence_score,
-            ST_AsGeoJSON(history_linestring) AS history_json,
-            ST_AsGeoJSON(reachability_polygon) AS reach_json
-        FROM entity_tracks
-        WHERE current_status = 'ACTIVE'
+            t.id,
+            t.track_code,
+            t.object_class,
+            t.current_status,
+            ST_X(t.last_known_point) AS lon,
+            ST_Y(t.last_known_point) AS lat,
+            t.estimated_heading_deg,
+            t.estimated_velocity_ms,
+            t.confidence_score,
+            t.last_detected_at,
+            sn.node_name AS last_camera_name,
+            ST_AsGeoJSON(t.history_linestring) AS history_json,
+            ST_AsGeoJSON(t.reachability_polygon) AS reach_json
+        FROM entity_tracks t
+        LEFT JOIN sensor_nodes sn ON sn.id = t.last_sensor_id
+        WHERE t.current_status = 'ACTIVE'
         """
     )
     try:
@@ -480,6 +499,12 @@ async def _fetch_tracks(
                 "estimated_heading_deg": row["estimated_heading_deg"],
                 "estimated_velocity_ms": row["estimated_velocity_ms"],
                 "confidence_score": row["confidence_score"],
+                "last_detected_at": (
+                    row["last_detected_at"].isoformat()
+                    if row["last_detected_at"] is not None
+                    else None
+                ),
+                "last_camera_name": row["last_camera_name"],
                 "history": history,
             }
         )
@@ -601,6 +626,43 @@ _COP_HTML = """<!DOCTYPE html>
     #login-modal, #admin-modal { display: none; }
     .compass-arrow { display: inline-block; transition: transform 0.12s ease-out; transform-origin: center center; }
     .map-pick-cursor { cursor: crosshair !important; }
+    .blinking-entity-dot {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: radial-gradient(circle, #fecaca 0%, #ef4444 55%, #991b1b 100%);
+      border: 2px solid #fca5a5;
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.85);
+      animation: entityPulse 1.2s ease-in-out infinite;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; line-height: 1;
+    }
+    @keyframes entityPulse {
+      0%, 100% { transform: scale(0.92); opacity: 1; }
+      50% { transform: scale(1.15); opacity: 0.82; }
+    }
+    .uncertainty-halo-svg {
+      animation: haloBreath 2.4s ease-in-out infinite;
+      pointer-events: none;
+    }
+    @keyframes haloBreath {
+      0%, 100% { opacity: 0.55; }
+      50% { opacity: 0.9; }
+    }
+    .entity-marker-wrap { position: relative; width: 28px; height: 28px; }
+    .entity-rich-tooltip {
+      background: rgba(15, 23, 42, 0.96); border: 1px solid #38bdf8;
+      color: #e2e8f0; padding: 8px 10px; border-radius: 8px;
+      font-family: 'JetBrains Mono', monospace; font-size: 10px;
+      line-height: 1.45; max-width: 260px; box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+    }
+    .entity-rich-tooltip .tt-title { color: #67e8f9; font-weight: 700; margin-bottom: 4px; }
+    #entity-modal.open { display: flex; }
+    #entity-modal { display: none; }
+    .zone-label-icon {
+      background: transparent; border: none;
+      font-family: 'JetBrains Mono', monospace; font-size: 9px;
+      color: #e2e8f0; text-shadow: 0 1px 3px #000;
+      white-space: nowrap; text-align: center;
+    }
   </style>
 </head>
 <body class="flex flex-col h-screen select-none">
@@ -802,7 +864,7 @@ _COP_HTML = """<!DOCTYPE html>
     <div class="flex items-center gap-2.5 shrink-0 whitespace-nowrap flex-nowrap">
       <div class="flex items-center gap-2 shrink-0 whitespace-nowrap flex-nowrap">
         <span class="mono font-bold text-base md:text-lg tracking-wider text-cyan-400 bg-cyan-950/60 border border-cyan-500/40 px-2.5 py-0.5 rounded shadow-sm whitespace-nowrap shrink-0">[ RIAN ]</span>
-        <span class="text-xs font-semibold text-slate-300 tracking-wider whitespace-nowrap hidden sm:inline shrink-0">AUTONOMOUS SPATIAL STATE ENGINE</span>
+        <span id="header-app-title" class="text-xs font-semibold text-slate-300 tracking-wider whitespace-nowrap hidden sm:inline shrink-0">Rian Ranch Operations</span>
         <span class="text-[10px] mono text-cyan-500/70 border-l border-cyan-800/40 pl-2 whitespace-nowrap hidden 2xl:inline shrink-0">v1.0.0 // TACTICAL C2</span>
       </div>
       <div id="live-indicator" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 text-[11px] mono shrink-0 whitespace-nowrap">
@@ -851,16 +913,24 @@ _COP_HTML = """<!DOCTYPE html>
     <!-- LEFT SIDEBAR: FLEET & PERIMETER -->
     <aside id="left-sidebar" class="absolute top-3 left-3 bottom-16 w-80 glass-panel rounded-xl shadow-2xl z-40 flex flex-col transition-all duration-300">
       <div class="p-3 border-b border-cyan-900/40 flex items-center justify-between">
-        <span class="mono text-xs font-bold text-cyan-400 tracking-wider">ESTATE SURVEILLANCE FLEET</span>
+        <span id="label-fleet-header" class="mono text-xs font-bold text-cyan-400 tracking-wider">ESTATE SURVEILLANCE FLEET</span>
         <span id="fleet-count" class="text-[10px] mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800/40">6 NODES</span>
       </div>
-      <div id="sensors-list" class="flex-1 overflow-y-auto p-2.5 space-y-2 text-xs">
+      <div id="sensors-list" class="flex-1 overflow-y-auto p-2.5 space-y-2 text-xs max-h-[38%]">
         <div class="text-slate-500 text-center py-6">Connecting to sensor fabric...</div>
+      </div>
+
+      <div class="p-3 border-t border-cyan-900/40 bg-slate-950/50">
+        <div class="text-[11px] mono font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
+          <span id="label-zones-header">Pastures &amp; Paddocks</span>
+          <span class="text-[10px] text-emerald-400">LIVE HEADCOUNT</span>
+        </div>
+        <div id="zones-sidebar-list" class="space-y-1 text-[10px] mono text-slate-300 max-h-28 overflow-y-auto"></div>
       </div>
 
       <div class="p-3 border-t border-cyan-900/40 bg-slate-950/60 rounded-b-xl">
         <div class="text-[11px] mono font-semibold text-slate-300 mb-1 flex items-center justify-between">
-          <span>STRATEGIC CHOKEPOINTS</span>
+          <span id="label-chokepoints-header">Gates &amp; Water Troughs</span>
           <span class="text-[10px] text-sky-400">PERIMETER</span>
         </div>
         <div id="chokepoints-mini" class="grid grid-cols-2 gap-1 text-[10px] mono text-slate-400"></div>
@@ -869,6 +939,26 @@ _COP_HTML = """<!DOCTYPE html>
 
     <!-- RIGHT SIDEBAR: AI COPILOT & THREAT DIRECTIVES -->
     <aside id="right-sidebar" class="absolute top-3 right-3 bottom-16 w-96 glass-panel rounded-xl shadow-2xl z-40 flex flex-col transition-all duration-300">
+
+      <!-- ENTITY INSPECTOR (DeepSeek targeted diagnostic) -->
+      <div id="entity-modal" class="absolute inset-0 z-[60] bg-slate-950/96 backdrop-blur-md rounded-xl border border-cyan-600/40 flex-col p-3 overflow-y-auto">
+        <div class="flex items-center justify-between mb-2">
+          <span class="mono text-xs font-bold text-cyan-300 tracking-wider">ENTITY INSPECTOR</span>
+          <button type="button" onclick="closeEntityModal()" class="text-slate-400 hover:text-white text-lg px-1">✕</button>
+        </div>
+        <div id="entity-modal-loading" class="hidden flex items-center gap-2 text-xs mono text-cyan-400 py-6 justify-center">
+          <span class="inline-block w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span>
+          Synthesizing targeted diagnostic...
+        </div>
+        <div id="entity-modal-body" class="space-y-2 text-xs">
+          <div id="entity-risk-badge" class="mono text-[10px] font-bold px-2 py-0.5 rounded border inline-block">—</div>
+          <div id="entity-headline" class="mono font-bold text-slate-100 text-sm leading-snug">Select an entity on the map</div>
+          <p id="entity-insight" class="text-slate-300 text-[11px] leading-relaxed"></p>
+          <div id="entity-actions" class="space-y-1 text-[10px] mono text-cyan-300"></div>
+          <div id="entity-telemetry" class="grid grid-cols-2 gap-1 text-[10px] mono text-slate-400 border-t border-slate-800 pt-2"></div>
+          <div id="entity-provider" class="text-[9px] mono text-slate-500 text-right pt-1"></div>
+        </div>
+      </div>
 
       <!-- AI SITREP CARD -->
       <div class="p-3 border-b border-cyan-900/40 bg-slate-950/40">
@@ -906,7 +996,7 @@ _COP_HTML = """<!DOCTYPE html>
       <!-- DIRECTIVES FEED -->
       <div class="p-2 border-b border-cyan-900/30">
         <div class="flex items-center justify-between px-1 mb-1">
-          <span class="mono text-[11px] font-bold text-amber-400">TACTICAL DIRECTIVES</span>
+          <span id="label-directives-header" class="mono text-[11px] font-bold text-amber-400">Herd Roundups &amp; Checks</span>
           <span id="threat-indicator" class="text-[9px] mono bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700">STANDBY</span>
         </div>
         <div id="directives-container" class="space-y-1.5 max-h-40 overflow-y-auto">
@@ -917,7 +1007,7 @@ _COP_HTML = """<!DOCTYPE html>
       <!-- ACTIVE TRACKS -->
       <div class="flex-1 overflow-y-auto p-2.5 flex flex-col">
         <div class="px-1 mb-1 text-[11px] mono text-slate-400 font-semibold flex items-center justify-between">
-          <span>KINEMATIC TRACKS (HMM)</span>
+          <span id="label-tracks-header">Livestock / Wildlife Tracks</span>
           <span id="active-tracks-count" class="text-red-400">0 ACTIVE</span>
         </div>
         <div id="tracks-list" class="flex-1 overflow-y-auto space-y-1.5 text-xs">
@@ -933,6 +1023,9 @@ _COP_HTML = """<!DOCTYPE html>
     <div class="absolute bottom-3 left-3 right-3 h-12 glass-panel rounded-xl shadow-2xl z-40 flex items-center justify-between px-3 md:px-4 gap-2 whitespace-nowrap overflow-x-auto flex-nowrap">
       <div class="flex items-center gap-2 shrink-0 whitespace-nowrap flex-nowrap">
         <span class="text-[11px] mono text-slate-400 font-bold mr-1 shrink-0 whitespace-nowrap">SIMULATION:</span>
+        <button onclick="runScenario('stray_cow')" class="px-2.5 py-1 text-xs mono font-semibold bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/50 rounded transition-colors whitespace-nowrap shrink-0">
+          ► Stray Cow Drift
+        </button>
         <button onclick="runScenario('vehicle_intrusion')" class="px-2.5 py-1 text-xs mono font-semibold bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-700/50 rounded transition-colors whitespace-nowrap shrink-0">
           ► Vehicle Intrusion
         </button>
@@ -940,7 +1033,7 @@ _COP_HTML = """<!DOCTYPE html>
           ► Pedestrian Hike
         </button>
         <button onclick="resetSimulation()" class="px-2.5 py-1 text-xs mono font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 rounded transition-colors whitespace-nowrap shrink-0">
-          ↺ Reset Tracks
+          ↺ Reset All
         </button>
       </div>
 
@@ -956,6 +1049,7 @@ _COP_HTML = """<!DOCTYPE html>
             <option value="cam-intersection">cam-intersection</option>
           </select>
           <select id="sel-class" class="bg-slate-950 text-amber-300 text-xs rounded border border-slate-700 px-1 py-0.5 outline-none shrink-0">
+            <option value="cow">Cow</option>
             <option value="truck">Truck</option>
             <option value="person">Person</option>
             <option value="car">Car</option>
@@ -1430,8 +1524,319 @@ _COP_HTML = """<!DOCTYPE html>
         .replace(/\\n/g, '<br>');
     }
 
-    // Map initialization
-    const map = L.map('map', { zoomControl: false }).setView([36.745, -119.82], 13);
+    let domainProfile = null;
+    let spatialZones = [];
+    const trackKinematics = new Map();
+    const entityRenderState = new Map();
+    let kinematicAnimHandle = null;
+    let selectedTrackId = null;
+
+    const ZONE_STYLE = {
+      'PASTURE-NORTH': { fill: '#10b981', stroke: '#34d399' },
+      'ZONE-CREEK': { fill: '#06b6d4', stroke: '#22d3ee' },
+      'PASTURE-SOUTH': { fill: '#f59e0b', stroke: '#fbbf24' },
+      'PADDOCK-HOME': { fill: '#8b5cf6', stroke: '#a78bfa' }
+    };
+
+    function entityClassIcon(cls) {
+      const c = String(cls || '').toLowerCase();
+      if (c === 'cow' || c === 'horse') return '🐄';
+      if (c === 'truck' || c === 'car') return '🚛';
+      if (c === 'person') return '🚶';
+      return '📍';
+    }
+
+    function uncertaintyRadiusM(elapsedS, confidence) {
+      const c = Math.min(1.0, Math.max(0.1, confidence ?? 0.5));
+      return 15.0 + 3.5 * Math.sqrt(Math.max(0, elapsedS)) * (1.0 - c);
+    }
+
+    function pointInRing(lon, lat, ring) {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0], yi = ring[i][1];
+        const xj = ring[j][0], yj = ring[j][1];
+        const intersect = ((yi > lat) !== (yj > lat))
+          && (lon < (xj - xi) * (lat - yi) / (yj - yi + 1e-15) + xi);
+        if (intersect) inside = !inside;
+      }
+      return inside;
+    }
+
+    function findZoneNameForPoint(lon, lat) {
+      for (const f of spatialZones) {
+        const ring = f.geometry && f.geometry.coordinates && f.geometry.coordinates[0];
+        if (ring && pointInRing(lon, lat, ring)) {
+          return f.properties.name || 'Unknown Zone';
+        }
+      }
+      return '—';
+    }
+
+    function applyDomainProfile(profile) {
+      if (!profile) return;
+      domainProfile = profile;
+      const titleEl = document.getElementById('header-app-title');
+      if (titleEl) titleEl.textContent = profile.app_title || 'Rian Operations';
+      const zh = document.getElementById('label-zones-header');
+      if (zh) zh.textContent = profile.zone_label || 'Spatial Zones';
+      const ch = document.getElementById('label-chokepoints-header');
+      if (ch) ch.textContent = profile.node_label || 'Access Nodes';
+      const dh = document.getElementById('label-directives-header');
+      if (dh) dh.textContent = profile.task_label || 'Operational Tasks';
+      const th = document.getElementById('label-tracks-header');
+      if (th) th.textContent = profile.entity_label || 'Entity Tracks';
+      document.title = (profile.app_title || 'Rian') + ' // COP';
+    }
+
+    async function loadDomainProfile() {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/domain-profile`);
+        if (res.ok) applyDomainProfile(await res.json());
+      } catch (e) {
+        console.warn('domain-profile fetch failed', e);
+      }
+    }
+
+    function renderZonesSidebar() {
+      const el = document.getElementById('zones-sidebar-list');
+      if (!el) return;
+      if (!spatialZones.length) {
+        el.innerHTML = '<div class="text-slate-500">Loading zones...</div>';
+        return;
+      }
+      el.innerHTML = spatialZones.map(f => {
+        const p = f.properties || {};
+        const hc = p.headcount != null ? p.headcount : 0;
+        return `<div class="flex justify-between gap-2 py-0.5 border-b border-slate-800/60">
+          <span class="truncate">${escapeHtml(p.name || p.zone_code)}</span>
+          <span class="text-emerald-400 font-bold shrink-0">${hc} hd</span>
+        </div>`;
+      }).join('');
+    }
+
+    function renderZonePolygons() {
+      layers.zones.clearLayers();
+      spatialZones.forEach(f => {
+        const code = (f.properties && f.properties.zone_code) || '';
+        const style = ZONE_STYLE[code] || {
+          fill: (f.properties && f.properties.color) || '#38bdf8',
+          stroke: '#67e8f9'
+        };
+        const ring = (f.geometry.coordinates[0] || []).map(c => [c[1], c[0]]);
+        if (!ring.length) return;
+        L.polygon(ring, {
+          color: style.stroke,
+          fillColor: style.fill,
+          fillOpacity: 0.22,
+          weight: 1.5,
+          dashArray: '4, 6'
+        }).addTo(layers.zones);
+        const center = ring.reduce((acc, p) => [acc[0] + p[0], acc[1] + p[1]], [0, 0])
+          .map(v => v / ring.length);
+        const hc = (f.properties && f.properties.headcount) || 0;
+        L.marker(center, {
+          icon: L.divIcon({
+            className: 'zone-label-icon',
+            html: `<div>${escapeHtml(f.properties.name)}<br><span style="color:#6ee7b7">${hc} head</span></div>`,
+            iconSize: [120, 28],
+            iconAnchor: [60, 14]
+          }),
+          interactive: false
+        }).addTo(layers.zones);
+      });
+    }
+
+    async function loadZones() {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/zones`);
+        const data = await res.json();
+        if (res.ok && data.features) {
+          spatialZones = data.features;
+          renderZonePolygons();
+          renderZonesSidebar();
+        }
+      } catch (e) {
+        console.warn('zones fetch failed', e);
+      }
+    }
+
+    function syncTrackKinematics(tracks) {
+      const seen = new Set();
+      tracks.forEach(t => {
+        const id = t.track_id || t.id;
+        if (!id) return;
+        seen.add(id);
+        const p = t.last_known_point || [0, 0];
+        const lastSeenMs = t.last_detected_at ? Date.parse(t.last_detected_at) : Date.now();
+        const heading = t.estimated_heading_deg || 0;
+        const v = t.estimated_velocity_ms || 0;
+        const br = heading * Math.PI / 180;
+        const lat0 = p[1];
+        const mLat = 111320;
+        const mLon = mLat * Math.cos(lat0 * Math.PI / 180);
+        const prev = trackKinematics.get(id);
+        const snap = !prev || prev.lastSeenIso !== t.last_detected_at;
+        trackKinematics.set(id, {
+          trackId: id,
+          trackCode: t.track_code,
+          objectClass: t.object_class,
+          baseLon: p[0],
+          baseLat: p[1],
+          vx: v * Math.sin(br) / mLon,
+          vy: v * Math.cos(br) / mLat,
+          headingDeg: heading,
+          velocityMs: v,
+          confidence: t.confidence_score ?? 0.5,
+          lastSeenMs: Number.isFinite(lastSeenMs) ? lastSeenMs : Date.now(),
+          lastSeenIso: t.last_detected_at,
+          lastCamera: t.last_camera_name || '—',
+          snap
+        });
+      });
+      for (const id of trackKinematics.keys()) {
+        if (!seen.has(id)) {
+          trackKinematics.delete(id);
+          const ent = entityRenderState.get(id);
+          if (ent) {
+            layers.entities.removeLayer(ent.marker);
+            layers.entities.removeLayer(ent.halo);
+            entityRenderState.delete(id);
+          }
+        }
+      }
+      ensureEntityMarkers();
+    }
+
+    function projectedPosition(kin, nowMs) {
+      const elapsedS = Math.max(0, (nowMs - kin.lastSeenMs) / 1000);
+      return {
+        lon: kin.baseLon + kin.vx * elapsedS,
+        lat: kin.baseLat + kin.vy * elapsedS,
+        elapsedS
+      };
+    }
+
+    function buildEntityTooltip(kin, lon, lat, elapsedS) {
+      const speedKmh = (kin.velocityMs || 0) * 3.6;
+      const zone = findZoneNameForPoint(lon, lat);
+      const radius = uncertaintyRadiusM(elapsedS, kin.confidence);
+      return `<div class="entity-rich-tooltip">
+        <div class="tt-title">${escapeHtml(kin.trackCode)} · ${escapeHtml(String(kin.objectClass || '').toUpperCase())}</div>
+        <div>Speed: <span class="text-cyan-300">${speedKmh.toFixed(1)} km/h</span> (${(kin.velocityMs || 0).toFixed(2)} m/s)</div>
+        <div>Heading: <span class="text-cyan-300">${(kin.headingDeg || 0).toFixed(0)}°</span></div>
+        <div>Zone: <span class="text-emerald-300">${escapeHtml(zone)}</span></div>
+        <div>Uncertainty: <span class="text-amber-300">± ${radius.toFixed(1)} m</span></div>
+        <div>Last Camera: <span class="text-slate-300">${escapeHtml(kin.lastCamera)}</span></div>
+      </div>`;
+    }
+
+    function ensureEntityMarkers() {
+      trackKinematics.forEach((kin, id) => {
+        let ent = entityRenderState.get(id);
+        const nowMs = Date.now();
+        const pos = projectedPosition(kin, nowMs);
+        if (!ent) {
+          const icon = L.divIcon({
+            className: '',
+            html: `<div class="entity-marker-wrap"><div class="blinking-entity-dot">${entityClassIcon(kin.objectClass)}</div></div>`,
+            iconSize: [28, 28],
+            iconAnchor: [14, 14]
+          });
+          const marker = L.marker([pos.lat, pos.lon], { icon, zIndexOffset: 800 });
+          const halo = L.circle([pos.lat, pos.lon], {
+            radius: uncertaintyRadiusM(pos.elapsedS, kin.confidence),
+            color: '#f87171',
+            weight: 2,
+            dashArray: '6, 8',
+            fillColor: '#ef4444',
+            fillOpacity: 0.08,
+            className: 'uncertainty-halo-svg'
+          });
+          marker.on('mouseover', () => {
+            const p = projectedPosition(kin, Date.now());
+            marker.bindTooltip(buildEntityTooltip(kin, p.lon, p.lat, p.elapsedS), {
+              direction: 'top', offset: [0, -12], className: 'entity-rich-tooltip', sticky: true
+            }).openTooltip();
+          });
+          marker.on('mouseout', () => marker.closeTooltip());
+          marker.on('click', () => openEntityInspector(id, pos.lat, pos.lon));
+          marker.addTo(layers.entities);
+          halo.addTo(layers.entities);
+          ent = { marker, halo, kin };
+          entityRenderState.set(id, ent);
+        }
+        ent.kin = kin;
+      });
+    }
+
+    function updateEntityKinematicsFrame() {
+      const nowMs = Date.now();
+      entityRenderState.forEach((ent, id) => {
+        const kin = trackKinematics.get(id);
+        if (!kin) return;
+        const pos = projectedPosition(kin, nowMs);
+        ent.marker.setLatLng([pos.lat, pos.lon]);
+        const r = uncertaintyRadiusM(pos.elapsedS, kin.confidence);
+        ent.halo.setLatLng([pos.lat, pos.lon]);
+        ent.halo.setRadius(r);
+      });
+      kinematicAnimHandle = requestAnimationFrame(updateEntityKinematicsFrame);
+    }
+
+    function startKinematicLoop() {
+      if (kinematicAnimHandle == null) {
+        kinematicAnimHandle = requestAnimationFrame(updateEntityKinematicsFrame);
+      }
+    }
+
+    function openEntityModal() {
+      document.getElementById('entity-modal').classList.add('open');
+    }
+
+    function closeEntityModal() {
+      document.getElementById('entity-modal').classList.remove('open');
+      selectedTrackId = null;
+    }
+
+    async function openEntityInspector(trackId, lat, lon) {
+      selectedTrackId = trackId;
+      map.flyTo([lat, lon], Math.max(map.getZoom(), 16), { animate: true, duration: 1.2 });
+      openEntityModal();
+      document.getElementById('entity-modal-loading').classList.remove('hidden');
+      document.getElementById('entity-headline').textContent = 'Analyzing entity telemetry...';
+      document.getElementById('entity-insight').textContent = '';
+      document.getElementById('entity-actions').innerHTML = '';
+      document.getElementById('entity-telemetry').innerHTML = '';
+      document.getElementById('entity-provider').textContent = '';
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/cop/entity/${trackId}/insight`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Insight failed');
+        document.getElementById('entity-risk-badge').textContent = data.risk_level || '—';
+        document.getElementById('entity-headline').textContent = data.headline || data.track_code || 'Entity Diagnostic';
+        document.getElementById('entity-insight').textContent = data.insight || '';
+        const actions = data.recommended_actions || [];
+        document.getElementById('entity-actions').innerHTML = actions.length
+          ? actions.map(a => `<div>• ${escapeHtml(a)}</div>`).join('') : '';
+        const tel = data.telemetry || {};
+        document.getElementById('entity-telemetry').innerHTML = `
+          <div>Speed: <span class="text-cyan-300">${tel.speed_kmh != null ? tel.speed_kmh + ' km/h' : '—'}</span></div>
+          <div>Heading: <span class="text-cyan-300">${tel.heading_deg != null ? tel.heading_deg + '°' : '—'}</span></div>
+          <div>Elapsed: <span class="text-amber-300">${tel.elapsed_seconds != null ? tel.elapsed_seconds + ' s' : '—'}</span></div>
+          <div>Uncertainty: <span class="text-amber-300">± ${tel.uncertainty_radius_m != null ? tel.uncertainty_radius_m + ' m' : '—'}</span></div>
+          <div class="col-span-2">Zone: <span class="text-emerald-300">${escapeHtml(data.current_zone || '—')}</span></div>`;
+        document.getElementById('entity-provider').textContent = data.provider ? 'AI: ' + data.provider : '';
+      } catch (e) {
+        document.getElementById('entity-headline').textContent = 'Diagnostic unavailable';
+        document.getElementById('entity-insight').textContent = String(e.message || e);
+      } finally {
+        document.getElementById('entity-modal-loading').classList.add('hidden');
+      }
+    }
+
+    // Map initialization (compact demo estate)
+    const map = L.map('map', { zoomControl: false }).setView([36.7465, -119.82], 15);
     L.control.zoom({ position: 'topright' }).addTo(map);
 
     // Basemap layers
@@ -1464,11 +1869,13 @@ _COP_HTML = """<!DOCTYPE html>
     }
 
     const layers = {
-      sensors: L.layerGroup().addTo(map),
-      tracks: L.layerGroup().addTo(map),
+      zones: L.layerGroup().addTo(map),
       reach: L.layerGroup().addTo(map),
+      routes: L.layerGroup().addTo(map),
       choke: L.layerGroup().addTo(map),
-      routes: L.layerGroup().addTo(map)
+      tracks: L.layerGroup().addTo(map),
+      sensors: L.layerGroup().addTo(map),
+      entities: L.layerGroup().addTo(map)
     };
 
     let currentState = null;
@@ -1611,18 +2018,11 @@ _COP_HTML = """<!DOCTYPE html>
       }).join('');
       document.getElementById('tracks-list').innerHTML = tracksHtml || '<div class="text-slate-500 text-center py-6">Perimeter secure. Zero unassociated radar gates.</div>';
 
-      tracks.forEach(t => {
-        const p = t.last_known_point;
-        const marker = L.circleMarker([p[1], p[0]], {
-          radius: 9,
-          color: '#ef4444',
-          fillColor: '#f87171',
-          fillOpacity: 0.9,
-          weight: 3,
-          className: 'pulse-target'
-        }).addTo(layers.tracks);
-        marker.bindPopup(`<b>TRACK ${t.track_code}</b><br>Class: ${t.object_class}<br>Speed: ${t.estimated_velocity_ms ? (t.estimated_velocity_ms * 3.6).toFixed(1) + ' km/h' : '—'}`);
+      syncTrackKinematics(tracks);
+      startKinematicLoop();
+      loadZones();
 
+      tracks.forEach(t => {
         if (t.history && t.history.coordinates) {
           const latlngs = t.history.coordinates.map(c => [c[1], c[0]]);
           L.polyline(latlngs, { color: '#f59e0b', weight: 3, dashArray: '6, 6' }).addTo(layers.tracks);
@@ -1805,7 +2205,10 @@ _COP_HTML = """<!DOCTYPE html>
 
     // Initial load and SSE stream
     initAuthGate();
+    loadDomainProfile();
+    loadZones();
     loadState().then(() => fetchAiSitrep());
+    startKinematicLoop();
     const es = new EventSource(`${API_BASE}/api/v1/cop/stream`);
     es.addEventListener('cop_state', e => {
       renderState(JSON.parse(e.data));
