@@ -48,6 +48,7 @@ This repository is organized to allow multiple specialized subagents to work in 
 | **16** | Multimodal VLM Forensic Inspector | `specs/16-vlm-forensic-snapshot-inspector.md` | Spec 00, 01, 15 | `VERIFIED` | Ingestion & Vision Agent |
 | **17** | Predator Threat Detection & Deterrents | `specs/17-predator-threat-detection.md` | Spec 00, 03, 13 | `VERIFIED` | Wildlife & Alert Agent |
 | **18** | Interactive Pasture & Virtual Fence Editor | `specs/18-interactive-pasture-fence-editor.md` | Spec 00, 02, 13 | `VERIFIED` | Web & Operations Agent |
+| **19** | Daily Herd Inventory & Roll-Call Export | `specs/19-daily-herd-inventory-rollcall.md` | Spec 00, 13, 16 | `VERIFIED` | Operations & Reporting Agent |
 
 ### Status Definitions
 - `DRAFT`: Under specification; not ready for agent implementation.

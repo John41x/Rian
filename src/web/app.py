@@ -108,6 +108,9 @@ def create_app() -> FastAPI:
     from src.web.predator_routes import router as predator_router
 
     application.include_router(predator_router)
+    from src.web.rollcall_routes import router as rollcall_router
+
+    application.include_router(rollcall_router)
 
     @application.get("/", response_class=HTMLResponse)
     @application.get("/cop", response_class=HTMLResponse)
@@ -628,8 +631,11 @@ _COP_HTML = """<!DOCTYPE html>
     .modal-overlay { background: rgba(3, 7, 18, 0.82); backdrop-filter: blur(8px); }
     .admin-glass { background: rgba(8, 12, 28, 0.92); backdrop-filter: blur(18px); border: 1px solid rgba(56, 189, 248, 0.28); }
     .admin-tab-btn.active { background: rgba(8, 145, 178, 0.35); color: #67e8f9; border-color: rgba(34, 211, 238, 0.45); }
-    #login-modal.open, #admin-modal.open { display: flex; }
-    #login-modal, #admin-modal { display: none; }
+    #login-modal.open, #admin-modal.open, #rollcall-modal.open { display: flex; }
+    #login-modal, #admin-modal, #rollcall-modal { display: none; }
+    .rollcall-status-verified { background: rgba(6, 78, 59, 0.55); color: #6ee7b7; border: 1px solid rgba(52, 211, 153, 0.45); }
+    .rollcall-status-overdue { background: rgba(120, 53, 15, 0.55); color: #fcd34d; border: 1px solid rgba(251, 191, 36, 0.45); }
+    .rollcall-status-missing { background: rgba(127, 29, 29, 0.6); color: #fca5a5; border: 1px solid rgba(248, 113, 113, 0.5); }
     .compass-arrow { display: inline-block; transition: transform 0.12s ease-out; transform-origin: center center; }
     .map-pick-cursor { cursor: crosshair !important; }
     .map-draw-zone-cursor { cursor: crosshair !important; }
@@ -884,6 +890,65 @@ _COP_HTML = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- DAILY HERD ROLL-CALL MODAL -->
+  <div id="rollcall-modal" class="fixed inset-0 z-[92] modal-overlay items-center justify-center p-3 md:p-6">
+    <div class="admin-glass rounded-2xl shadow-2xl w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden">
+      <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-cyan-900/50">
+        <div>
+          <h2 class="mono text-sm font-bold text-cyan-300 tracking-wider">Daily Herd Roll-Call &amp; Pasture Census</h2>
+          <p id="rollcall-generated-at" class="text-[10px] mono text-slate-500 mt-0.5">—</p>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <button type="button" onclick="exportRollcallCsv()"
+                  class="px-3 py-1.5 text-[11px] mono font-bold rounded bg-emerald-950 text-emerald-300 border border-emerald-600/50 hover:bg-emerald-900/70 whitespace-nowrap">
+            📥 Export CSV
+          </button>
+          <button type="button" onclick="closeRollcallModal()" class="text-slate-400 hover:text-white text-lg px-2">✕</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-2 px-4 py-3 border-b border-slate-800/80 text-[11px] mono">
+        <div class="rounded-lg bg-slate-950/70 border border-slate-800 px-3 py-2">
+          <div class="text-slate-500 uppercase text-[9px]">Total Head</div>
+          <div id="rollcall-metric-total" class="text-lg font-bold text-cyan-300">0</div>
+        </div>
+        <div class="rounded-lg bg-slate-950/70 border border-emerald-900/40 px-3 py-2">
+          <div class="text-emerald-600 uppercase text-[9px]">Verified Active</div>
+          <div id="rollcall-metric-verified" class="text-lg font-bold text-emerald-400">0</div>
+        </div>
+        <div class="rounded-lg bg-slate-950/70 border border-amber-900/40 px-3 py-2">
+          <div class="text-amber-600 uppercase text-[9px]">Overdue Check</div>
+          <div id="rollcall-metric-overdue" class="text-lg font-bold text-amber-400">0</div>
+        </div>
+        <div class="rounded-lg bg-slate-950/70 border border-red-900/40 px-3 py-2">
+          <div class="text-red-500 uppercase text-[9px]">Missing / Critical</div>
+          <div id="rollcall-metric-missing" class="text-lg font-bold text-red-400">0</div>
+        </div>
+      </div>
+      <div id="rollcall-loading" class="hidden px-4 py-6 text-xs mono text-cyan-400 flex items-center gap-2 justify-center">
+        <span class="inline-block w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span>
+        Compiling pasture census...
+      </div>
+      <div class="flex-1 overflow-auto px-4 py-3">
+        <table class="w-full text-[11px] mono text-left min-w-[720px]">
+          <thead class="bg-slate-950/90 text-slate-400 sticky top-0 z-10">
+            <tr>
+              <th class="px-2 py-2">Tag</th>
+              <th class="px-2 py-2">Class</th>
+              <th class="px-2 py-2">Pasture / Zone</th>
+              <th class="px-2 py-2">Last Camera</th>
+              <th class="px-2 py-2">Hours Ago</th>
+              <th class="px-2 py-2">Status</th>
+              <th class="px-2 py-2">VLM Observations</th>
+            </tr>
+          </thead>
+          <tbody id="rollcall-tbody" class="divide-y divide-slate-800 text-slate-300">
+            <tr><td colspan="7" class="px-2 py-6 text-center text-slate-500">Open roll-call to load inventory.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- TOP HUD BAR -->
   <header class="h-14 bg-slate-950/95 border-b border-cyan-900/40 px-3 lg:px-4 flex items-center justify-between z-50 whitespace-nowrap overflow-x-auto overflow-y-hidden gap-2 lg:gap-3 flex-nowrap">
     <div class="flex items-center gap-2.5 shrink-0 whitespace-nowrap flex-nowrap">
@@ -918,6 +983,7 @@ _COP_HTML = """<!DOCTYPE html>
       </div>
 
       <span id="user-badge" class="hidden px-2 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-700 text-[10px] mono shrink-0 whitespace-nowrap max-w-[150px] truncate">[ GUEST ]</span>
+      <button type="button" onclick="openRollcallModal()" class="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] mono text-emerald-300 border border-emerald-700/50 font-bold shrink-0 whitespace-nowrap">📋 Roll-Call</button>
       <button type="button" onclick="openAdminModal()" class="px-2 py-1 rounded bg-cyan-950 hover:bg-cyan-900 text-[10px] mono text-cyan-300 border border-cyan-700/50 font-bold shrink-0 whitespace-nowrap">🛡 Admin</button>
       <button type="button" id="btn-logout" onclick="logout()" class="hidden px-2 py-1 rounded bg-slate-900 hover:bg-red-950 text-[10px] mono text-slate-400 hover:text-red-300 border border-slate-700 shrink-0 whitespace-nowrap">Logout</button>
 
@@ -2570,6 +2636,76 @@ _COP_HTML = """<!DOCTYPE html>
       } finally {
         if (btn) btn.textContent = originalText;
       }
+    }
+
+    function rollcallStatusBadgeClass(status) {
+      if (status === 'VERIFIED_ACTIVE') return 'rollcall-status-verified';
+      if (status === 'OVERDUE_CHECK') return 'rollcall-status-overdue';
+      return 'rollcall-status-missing';
+    }
+
+    function rollcallStatusLabel(status) {
+      if (status === 'VERIFIED_ACTIVE') return 'Verified Active';
+      if (status === 'OVERDUE_CHECK') return 'Overdue Check';
+      return 'Missing Critical';
+    }
+
+    function openRollcallModal() {
+      document.getElementById('rollcall-modal').classList.add('open');
+      refreshRollcallReport();
+    }
+
+    function closeRollcallModal() {
+      document.getElementById('rollcall-modal').classList.remove('open');
+    }
+
+    async function refreshRollcallReport() {
+      const loading = document.getElementById('rollcall-loading');
+      const tbody = document.getElementById('rollcall-tbody');
+      loading.classList.remove('hidden');
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/reports/herd-rollcall`);
+        if (!res.ok) throw new Error('Roll-call fetch failed');
+        const data = await res.json();
+        const items = data.items || [];
+        const verified = items.filter(i => i.health_status === 'VERIFIED_ACTIVE').length;
+        const overdue = items.filter(i => i.health_status === 'OVERDUE_CHECK').length;
+        const missing = items.filter(i => i.health_status === 'MISSING_CRITICAL').length;
+        document.getElementById('rollcall-metric-total').textContent = String(data.total_tracked_count ?? items.length);
+        document.getElementById('rollcall-metric-verified').textContent = String(verified);
+        document.getElementById('rollcall-metric-overdue').textContent = String(overdue);
+        document.getElementById('rollcall-metric-missing').textContent = String(missing);
+        document.getElementById('rollcall-generated-at').textContent = data.generated_at_utc
+          ? `Generated ${data.generated_at_utc} UTC · Profile ${data.profile_type || '—'}`
+          : '—';
+        if (!items.length) {
+          tbody.innerHTML = '<tr><td colspan="7" class="px-2 py-6 text-center text-slate-500">No tracked entities in current COP state.</td></tr>';
+        } else {
+          tbody.innerHTML = items.map(item => {
+            const badgeCls = rollcallStatusBadgeClass(item.health_status);
+            const label = rollcallStatusLabel(item.health_status);
+            const vlm = (item.vlm_summary || '—').replace(/</g, '&lt;');
+            return `<tr>
+              <td class="px-2 py-2 font-bold text-cyan-300">${item.track_code}</td>
+              <td class="px-2 py-2">${item.entity_class}</td>
+              <td class="px-2 py-2">${item.current_zone}</td>
+              <td class="px-2 py-2">${item.last_camera_name || '—'}</td>
+              <td class="px-2 py-2">${Number(item.hours_since_last_seen).toFixed(1)}</td>
+              <td class="px-2 py-2"><span class="px-2 py-0.5 rounded text-[10px] ${badgeCls}">${label}</span></td>
+              <td class="px-2 py-2 text-slate-400 max-w-xs">${vlm}</td>
+            </tr>`;
+          }).join('');
+        }
+      } catch (e) {
+        console.warn('rollcall report failed', e);
+        tbody.innerHTML = '<tr><td colspan="7" class="px-2 py-6 text-center text-red-400">Failed to load roll-call report.</td></tr>';
+      } finally {
+        loading.classList.add('hidden');
+      }
+    }
+
+    function exportRollcallCsv() {
+      window.location.href = `${API_BASE}/api/v1/reports/herd-rollcall/csv`;
     }
 
     async function loadState() {
