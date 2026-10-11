@@ -762,14 +762,14 @@ _COP_HTML = """<!DOCTYPE html>
         <!-- Tab: SLA -->
         <div id="admin-tab-sla" class="admin-tab-panel hidden space-y-4">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h3 class="mono text-xs font-bold text-slate-300">REAL-TIME SLA DASHBOARD</h3>
-              <p id="sla-timestamp" class="text-[10px] mono text-slate-500 mt-0.5">—</p>
+            <div class="flex items-center gap-3 whitespace-nowrap">
+              <h3 class="mono text-xs font-bold text-slate-300 whitespace-nowrap">REAL-TIME SLA DASHBOARD</h3>
+              <span id="sla-timestamp" class="text-[10px] mono text-slate-500 whitespace-nowrap">—</span>
             </div>
-            <div class="flex items-center gap-2">
-              <span id="sla-overall-badge" class="mono text-[10px] px-2 py-0.5 rounded border">—</span>
+            <div class="flex items-center gap-2 shrink-0 whitespace-nowrap">
+              <span id="sla-overall-badge" class="mono text-[10px] px-2 py-0.5 rounded border whitespace-nowrap">—</span>
               <button type="button" id="btn-run-benchmark" onclick="runSlaBenchmark()"
-                      class="px-3 py-1.5 text-[10px] mono font-bold rounded bg-violet-950 text-violet-300 border border-violet-700/50 hover:bg-violet-900/60">
+                      class="px-3 py-1.5 text-[10px] mono font-bold rounded bg-violet-950 text-violet-300 border border-violet-700/50 hover:bg-violet-900/60 whitespace-nowrap">
                 Run 25-Iteration Benchmark
               </button>
             </div>
@@ -798,52 +798,50 @@ _COP_HTML = """<!DOCTYPE html>
   </div>
 
   <!-- TOP HUD BAR -->
-  <header class="h-14 bg-slate-950/95 border-b border-cyan-900/40 px-4 flex items-center justify-between z-50">
-    <div class="flex items-center gap-4">
-      <div class="flex items-center gap-2">
-        <span class="mono font-bold text-lg tracking-wider text-cyan-400 bg-cyan-950/60 border border-cyan-500/40 px-2.5 py-0.5 rounded shadow-sm">[ RIAN ]</span>
-        <span class="text-xs font-semibold text-slate-300 tracking-wider hidden sm:inline">AUTONOMOUS SPATIAL STATE ENGINE</span>
-        <span class="text-[10px] mono text-cyan-500/70 border-l border-cyan-800/40 pl-2">v1.0.0 // TACTICAL C2</span>
+  <header class="h-14 bg-slate-950/95 border-b border-cyan-900/40 px-3 lg:px-4 flex items-center justify-between z-50 whitespace-nowrap overflow-x-auto overflow-y-hidden gap-2 lg:gap-3 flex-nowrap">
+    <div class="flex items-center gap-2.5 shrink-0 whitespace-nowrap flex-nowrap">
+      <div class="flex items-center gap-2 shrink-0 whitespace-nowrap flex-nowrap">
+        <span class="mono font-bold text-base md:text-lg tracking-wider text-cyan-400 bg-cyan-950/60 border border-cyan-500/40 px-2.5 py-0.5 rounded shadow-sm whitespace-nowrap shrink-0">[ RIAN ]</span>
+        <span class="text-xs font-semibold text-slate-300 tracking-wider whitespace-nowrap hidden sm:inline shrink-0">AUTONOMOUS SPATIAL STATE ENGINE</span>
+        <span class="text-[10px] mono text-cyan-500/70 border-l border-cyan-800/40 pl-2 whitespace-nowrap hidden 2xl:inline shrink-0">v1.0.0 // TACTICAL C2</span>
       </div>
-      <div id="live-indicator" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 text-[11px] mono">
+      <div id="live-indicator" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 text-[11px] mono shrink-0 whitespace-nowrap">
         <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-        <span id="conn-status">LIVE SSE STREAM</span>
+        <span id="conn-status" class="whitespace-nowrap">LIVE SSE STREAM</span>
       </div>
     </div>
 
-    <!-- STATS COUNTERS -->
-    <div class="flex items-center gap-5 text-xs mono">
-      <div class="text-center">
-        <div class="text-[10px] text-slate-400 uppercase">Active Targets</div>
-        <div id="kpi-tracks" class="font-bold text-red-400 text-sm">0</div>
-      </div>
-      <div class="text-center">
-        <div class="text-[10px] text-slate-400 uppercase">Sensor Nodes</div>
-        <div id="kpi-sensors" class="font-bold text-emerald-400 text-sm">0</div>
-      </div>
-      <div class="text-center">
-        <div class="text-[10px] text-slate-400 uppercase">Chokepoints</div>
-        <div id="kpi-chokepoints" class="font-bold text-sky-400 text-sm">0</div>
-      </div>
-      <div class="text-center">
-        <div class="text-[10px] text-slate-400 uppercase">Directives</div>
-        <div id="kpi-directives" class="font-bold text-amber-400 text-sm">0</div>
+    <!-- STATS COUNTERS, CONTROLS, CLOCK & ACTIONS (SINGLE LINE GUARANTEED) -->
+    <div class="flex items-center gap-2 lg:gap-2.5 text-xs mono shrink-0 whitespace-nowrap flex-nowrap">
+      <!-- SLEEK UNIFIED TELEMETRY CLUSTER -->
+      <div class="hidden sm:flex items-center gap-2.5 bg-slate-900/80 border border-slate-800 px-2.5 py-1 rounded text-[11px] whitespace-nowrap shrink-0">
+        <span title="Active Intruder Tracks" class="flex items-center gap-1"><span class="text-slate-400">TRK:</span><strong id="kpi-tracks" class="text-red-400 font-bold">0</strong></span>
+        <span class="text-slate-700">·</span>
+        <span title="Surveillance Sensors" class="flex items-center gap-1"><span class="text-slate-400">CAM:</span><strong id="kpi-sensors" class="text-emerald-400 font-bold">0</strong></span>
+        <span class="text-slate-700 hidden md:inline">·</span>
+        <span title="Strategic Chokepoints" class="hidden md:flex items-center gap-1"><span class="text-slate-400">CP:</span><strong id="kpi-chokepoints" class="text-sky-400 font-bold">0</strong></span>
+        <span class="text-slate-700 hidden lg:inline">·</span>
+        <span title="Tactical Directives" class="hidden lg:flex items-center gap-1"><span class="text-slate-400">DIR:</span><strong id="kpi-directives" class="text-amber-400 font-bold">0</strong></span>
       </div>
 
       <!-- BASEMAP SWITCHER -->
-      <div class="flex items-center bg-slate-900 border border-slate-700 rounded p-0.5 text-[10px]">
-        <button id="btn-satellite" onclick="switchBasemap('satellite')" class="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 font-bold border border-cyan-700/50">🛰 Satellite</button>
-        <button id="btn-dark" onclick="switchBasemap('dark')" class="px-2 py-0.5 rounded text-slate-400 hover:text-slate-200">⬛ Tactical</button>
+      <div class="flex items-center bg-slate-900 border border-slate-700 rounded p-0.5 text-[10px] shrink-0 whitespace-nowrap">
+        <button id="btn-satellite" onclick="switchBasemap('satellite')" class="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 font-bold border border-cyan-700/50 whitespace-nowrap">🛰 Sat</button>
+        <button id="btn-dark" onclick="switchBasemap('dark')" class="px-2 py-0.5 rounded text-slate-400 hover:text-slate-200 whitespace-nowrap">⬛ Dark</button>
       </div>
 
-      <span id="user-badge" class="hidden px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-700 text-[10px] mono">[ GUEST ]</span>
-      <button type="button" onclick="openAdminModal()" class="px-2 py-1 rounded bg-cyan-950 hover:bg-cyan-900 text-[10px] mono text-cyan-300 border border-cyan-700/50 font-bold">[ 🛡 Admin &amp; Fleet ]</button>
-      <button type="button" id="btn-logout" onclick="logout()" class="hidden px-2 py-1 rounded bg-slate-900 hover:bg-red-950 text-[10px] mono text-slate-400 hover:text-red-300 border border-slate-700">Logout</button>
-      <div class="text-right pl-3 border-l border-slate-800 hidden md:block">
-        <div id="clock-utc" class="text-xs font-bold text-cyan-300">00:00:00 UTC</div>
-        <div id="clock-local" class="text-[10px] text-slate-400">00:00:00 LOCAL</div>
+      <span id="user-badge" class="hidden px-2 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-700 text-[10px] mono shrink-0 whitespace-nowrap max-w-[150px] truncate">[ GUEST ]</span>
+      <button type="button" onclick="openAdminModal()" class="px-2 py-1 rounded bg-cyan-950 hover:bg-cyan-900 text-[10px] mono text-cyan-300 border border-cyan-700/50 font-bold shrink-0 whitespace-nowrap">🛡 Admin</button>
+      <button type="button" id="btn-logout" onclick="logout()" class="hidden px-2 py-1 rounded bg-slate-900 hover:bg-red-950 text-[10px] mono text-slate-400 hover:text-red-300 border border-slate-700 shrink-0 whitespace-nowrap">Logout</button>
+
+      <!-- CLOCK (STRICTLY ON ONE SINGLE LINE) -->
+      <div class="flex items-center gap-2 px-2.5 py-1 rounded bg-slate-900/80 border border-slate-800 shrink-0 whitespace-nowrap text-[11px]">
+        <span id="clock-utc" class="font-bold text-cyan-300 whitespace-nowrap">00:00:00 UTC</span>
+        <span class="text-slate-600 whitespace-nowrap">|</span>
+        <span id="clock-local" class="text-slate-400 whitespace-nowrap">00:00:00 LOCAL</span>
       </div>
-      <button onclick="promptApiUrl()" title="Configure Backend API URL" class="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] mono text-cyan-400 border border-cyan-800/50">⚙ API</button>
+
+      <button onclick="promptApiUrl()" title="Configure Backend API URL" class="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] mono text-cyan-400 border border-cyan-800/50 shrink-0 whitespace-nowrap">⚙ API</button>
     </div>
   </header>
 
@@ -883,11 +881,11 @@ _COP_HTML = """<!DOCTYPE html>
         </div>
 
         <div id="ai-sitrep-card" class="bg-slate-900/90 rounded-lg p-2.5 border border-cyan-900/40 text-xs">
-          <div class="flex items-center justify-between">
-            <span id="sitrep-badge" class="mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/50">DEFCON 5 // SECURE</span>
-            <span id="sitrep-time" class="mono text-[10px] text-slate-400">--:--:-- UTC</span>
+          <div class="flex items-center justify-between gap-2 mb-1.5 whitespace-nowrap">
+            <span id="sitrep-badge" class="mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/50 truncate shrink-0 max-w-[210px] whitespace-nowrap">DEFCON 5 // SECURE</span>
+            <span id="sitrep-time" class="mono text-[10px] text-slate-400 shrink-0 whitespace-nowrap">--:--:-- UTC</span>
           </div>
-          <div id="sitrep-headline" class="mono font-bold text-slate-200 mt-1.5 text-[11px]">Perimeter Secure</div>
+          <div id="sitrep-headline" class="mono font-bold text-slate-200 mt-1.5 text-[11px] leading-snug break-words">Perimeter Secure</div>
           <p id="sitrep-summary" class="text-slate-300 text-[11px] leading-relaxed mt-1">
             Analyzing spatial telemetry and evaluating kinematic gating envelopes across acreage...
           </p>
@@ -932,42 +930,42 @@ _COP_HTML = """<!DOCTYPE html>
     <div id="map"></div>
 
     <!-- BOTTOM FLOATING SIMULATION & CONTROL BAR -->
-    <div class="absolute bottom-3 left-3 right-3 h-12 glass-panel rounded-xl shadow-2xl z-40 flex items-center justify-between px-4">
-      <div class="flex items-center gap-2">
-        <span class="text-[11px] mono text-slate-400 font-bold mr-1">SIMULATION ENGINE:</span>
-        <button onclick="runScenario('vehicle_intrusion')" class="px-2.5 py-1 text-xs mono font-semibold bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-700/50 rounded transition-colors">
-          ► Vehicle Intrusion (North Gate)
+    <div class="absolute bottom-3 left-3 right-3 h-12 glass-panel rounded-xl shadow-2xl z-40 flex items-center justify-between px-3 md:px-4 gap-2 whitespace-nowrap overflow-x-auto flex-nowrap">
+      <div class="flex items-center gap-2 shrink-0 whitespace-nowrap flex-nowrap">
+        <span class="text-[11px] mono text-slate-400 font-bold mr-1 shrink-0 whitespace-nowrap">SIMULATION:</span>
+        <button onclick="runScenario('vehicle_intrusion')" class="px-2.5 py-1 text-xs mono font-semibold bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-700/50 rounded transition-colors whitespace-nowrap shrink-0">
+          ► Vehicle Intrusion
         </button>
-        <button onclick="runScenario('pedestrian_hike')" class="px-2.5 py-1 text-xs mono font-semibold bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-700/50 rounded transition-colors">
+        <button onclick="runScenario('pedestrian_hike')" class="px-2.5 py-1 text-xs mono font-semibold bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-700/50 rounded transition-colors whitespace-nowrap shrink-0">
           ► Pedestrian Hike
         </button>
-        <button onclick="resetSimulation()" class="px-2.5 py-1 text-xs mono font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 rounded transition-colors">
+        <button onclick="resetSimulation()" class="px-2.5 py-1 text-xs mono font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 rounded transition-colors whitespace-nowrap shrink-0">
           ↺ Reset Tracks
         </button>
       </div>
 
-      <div class="flex items-center gap-3 text-xs mono">
+      <div class="flex items-center gap-2.5 text-xs mono shrink-0 whitespace-nowrap flex-nowrap">
         <!-- Manual Camera Trigger Form -->
-        <div class="flex items-center gap-1.5 bg-slate-900/80 px-2 py-1 rounded border border-slate-700">
-          <label class="text-[10px] text-slate-400">Inject:</label>
-          <select id="sel-camera" class="bg-slate-950 text-cyan-300 text-xs rounded border border-slate-700 px-1 py-0.5 outline-none">
+        <div class="flex items-center gap-1.5 bg-slate-900/80 px-2 py-1 rounded border border-slate-700 shrink-0 whitespace-nowrap">
+          <label class="text-[10px] text-slate-400 whitespace-nowrap">Inject:</label>
+          <select id="sel-camera" class="bg-slate-950 text-cyan-300 text-xs rounded border border-slate-700 px-1 py-0.5 outline-none shrink-0">
             <option value="cam-gate-north">cam-gate-north</option>
             <option value="cam-gate-south">cam-gate-south</option>
             <option value="cam-gate-east">cam-gate-east</option>
             <option value="cam-gate-west">cam-gate-west</option>
             <option value="cam-intersection">cam-intersection</option>
           </select>
-          <select id="sel-class" class="bg-slate-950 text-amber-300 text-xs rounded border border-slate-700 px-1 py-0.5 outline-none">
+          <select id="sel-class" class="bg-slate-950 text-amber-300 text-xs rounded border border-slate-700 px-1 py-0.5 outline-none shrink-0">
             <option value="truck">Truck</option>
             <option value="person">Person</option>
             <option value="car">Car</option>
           </select>
-          <button onclick="injectDetection()" class="px-2 py-0.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded text-[11px] transition-colors">
+          <button onclick="injectDetection()" class="px-2 py-0.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded text-[11px] transition-colors whitespace-nowrap shrink-0">
             Emit
           </button>
         </div>
 
-        <span class="text-[10px] text-slate-400 hidden xl:inline">Click map to relocate Response Unit</span>
+        <span class="text-[10px] text-slate-400 hidden xl:inline shrink-0 whitespace-nowrap">Click map to relocate Response Unit</span>
       </div>
     </div>
 
@@ -1036,7 +1034,7 @@ _COP_HTML = """<!DOCTYPE html>
         badge.classList.remove('hidden');
         logoutBtn.classList.remove('hidden');
       } else if (authSession.guest) {
-        badge.textContent = '[ GUEST / LOCAL DEV ]';
+        badge.textContent = '[ GUEST ]';
         badge.className = 'px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-700 text-[10px] mono';
         badge.classList.remove('hidden');
         logoutBtn.classList.add('hidden');
@@ -1428,8 +1426,8 @@ _COP_HTML = """<!DOCTYPE html>
     function formatCopilotText(text) {
       const safe = escapeHtml(text);
       return safe
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\n/g, '<br>');
+        .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
+        .replace(/\\n/g, '<br>');
     }
 
     // Map initialization
