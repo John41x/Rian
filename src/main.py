@@ -11,6 +11,8 @@ import os
 import signal
 import sys
 
+from src.web.app import app
+
 logger = logging.getLogger("rian.main")
 
 

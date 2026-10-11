@@ -1,0 +1,10 @@
+# Exclude Python backend and heavy dependencies from Vercel Serverless Function build
+requirements.txt
+src/
+tests/
+tools/
+specs/
+data/
+.env*
+docker-compose*.yml
+Dockerfile
