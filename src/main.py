@@ -11,7 +11,10 @@ import os
 import signal
 import sys
 
-from src.web.app import app
+from src.web.app import app as _app
+
+# Expose top-level FastAPI instance for ASGI servers and cloud deployment scanners
+app = _app
 
 logger = logging.getLogger("rian.main")
 
