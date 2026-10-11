@@ -7,11 +7,36 @@ sit strictly on one line and never wrap or overflow across diverse viewports.
 
 from __future__ import annotations
 
+import socket
+import threading
 import time
 import pytest
+import uvicorn
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+
+
+def _is_port_open(port: int = 8000) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+@pytest.fixture(scope="session", autouse=True)
+def live_server():
+    if not _is_port_open(8000):
+        from src.web.app import app
+
+        config = uvicorn.Config(app, host="127.0.0.1", port=8000, log_level="error")
+        server = uvicorn.Server(config)
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        for _ in range(30):
+            if _is_port_open(8000):
+                break
+            time.sleep(0.1)
+    yield
 
 
 VIEWPORTS = [

@@ -57,21 +57,6 @@ def collect_verified_entity_names(cop_state: Dict[str, Any]) -> Tuple[Set[str], 
         if name:
             chokepoints.add(name)
 
-    # Include verified named spatial zones (pastures, paddocks, yards)
-    for z in cop_state.get("zones") or []:
-        name = z.get("name") or (z.get("properties") or {}).get("name")
-        if name:
-            chokepoints.add(str(name))
-
-    try:
-        from src.spatial.zones import ZoneManager
-        for z in ZoneManager().list_zones():
-            props = z.get("properties") or {}
-            if props.get("name"):
-                chokepoints.add(str(props["name"]))
-    except Exception:
-        pass
-
     for directive in cop_state.get("directives") or []:
         name = _name_from_record(directive, "chokepoint_name")
         if name:
@@ -157,6 +142,15 @@ def _hallucinated_chokepoint_phrases(
         "track",
     }
     valid_lower = {c.lower() for c in valid_chokepoints}
+    try:
+        from src.spatial.zones import ZoneManager
+
+        for z in ZoneManager().list_zones():
+            pname = (z.get("properties") or {}).get("name")
+            if pname:
+                valid_lower.add(str(pname).lower())
+    except Exception:
+        pass
     rejected: List[str] = []
     for match in re.finditer(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b", text):
         phrase = match.group(0)

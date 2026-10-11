@@ -102,6 +102,12 @@ def create_app() -> FastAPI:
     from src.web.zone_routes import router as zone_router
 
     application.include_router(zone_router)
+    from src.web.snapshot_routes import router as snapshot_router
+
+    application.include_router(snapshot_router)
+    from src.web.predator_routes import router as predator_router
+
+    application.include_router(predator_router)
 
     @application.get("/", response_class=HTMLResponse)
     @application.get("/cop", response_class=HTMLResponse)
@@ -626,6 +632,9 @@ _COP_HTML = """<!DOCTYPE html>
     #login-modal, #admin-modal { display: none; }
     .compass-arrow { display: inline-block; transition: transform 0.12s ease-out; transform-origin: center center; }
     .map-pick-cursor { cursor: crosshair !important; }
+    .map-draw-zone-cursor { cursor: crosshair !important; }
+    #draw-zone-card { display: none; }
+    #draw-zone-card.open { display: block; }
     .blinking-entity-dot {
       width: 14px; height: 14px; border-radius: 50%;
       background: radial-gradient(circle, #fecaca 0%, #ef4444 55%, #991b1b 100%);
@@ -642,6 +651,22 @@ _COP_HTML = """<!DOCTYPE html>
     .uncertainty-halo-svg {
       animation: haloBreath 2.4s ease-in-out infinite;
       pointer-events: none;
+    }
+    #predator-alert-banner {
+      background: linear-gradient(90deg, rgba(127,29,29,0.95), rgba(153,27,27,0.92));
+      border: 1px solid rgba(248,113,113,0.6);
+      box-shadow: 0 8px 32px rgba(220,38,38,0.35);
+      animation: predatorPulse 2s ease-in-out infinite;
+    }
+    @keyframes predatorPulse {
+      0%, 100% { box-shadow: 0 0 12px rgba(248,113,113,0.45); }
+      50% { box-shadow: 0 0 22px rgba(248,113,113,0.75); }
+    }
+    .predator-threat-line path {
+      stroke: #dc2626 !important;
+      stroke-width: 3 !important;
+      stroke-dasharray: 8 10 !important;
+      filter: drop-shadow(0 0 6px rgba(220,38,38,0.85));
     }
     @keyframes haloBreath {
       0%, 100% { opacity: 0.55; }
@@ -910,6 +935,8 @@ _COP_HTML = """<!DOCTYPE html>
   <!-- MAIN VIEWPORT -->
   <div class="relative flex-1 flex overflow-hidden">
 
+    <div id="predator-alert-banner" class="hidden absolute top-2 left-1/2 -translate-x-1/2 z-[55] max-w-[95vw] px-4 py-2 rounded-lg text-xs mono text-red-50 font-semibold flex flex-wrap items-center justify-center gap-2 text-center"></div>
+
     <!-- LEFT SIDEBAR: FLEET & PERIMETER -->
     <aside id="left-sidebar" class="absolute top-3 left-3 bottom-16 w-80 glass-panel rounded-xl shadow-2xl z-40 flex flex-col transition-all duration-300">
       <div class="p-3 border-b border-cyan-900/40 flex items-center justify-between">
@@ -957,6 +984,33 @@ _COP_HTML = """<!DOCTYPE html>
           <div id="entity-actions" class="space-y-1 text-[10px] mono text-cyan-300"></div>
           <div id="entity-telemetry" class="grid grid-cols-2 gap-1 text-[10px] mono text-slate-400 border-t border-slate-800 pt-2"></div>
           <div id="entity-provider" class="text-[9px] mono text-slate-500 text-right pt-1"></div>
+          <div id="entity-snapshot-section" class="border-t border-slate-800 pt-2 mt-2 space-y-2">
+            <div class="flex items-center justify-between gap-2">
+              <span class="mono text-[10px] font-bold text-cyan-300">SNAPSHOT VISUAL INSPECTION</span>
+              <span id="entity-snapshot-meta" class="text-[9px] mono text-slate-500 truncate"></span>
+            </div>
+            <div id="entity-snapshot-placeholder" class="hidden text-center py-3 text-slate-500 text-[10px]">
+              No forensic snapshot linked to this track yet.
+              <button type="button" onclick="generateTestSnapshot()" class="mt-2 block mx-auto px-2 py-1 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 rounded border border-cyan-800 text-[10px] mono">Generate Test Snapshot</button>
+            </div>
+            <div id="entity-snapshot-viewer" class="hidden relative w-full rounded border border-slate-700 overflow-hidden bg-slate-900">
+              <img id="entity-snapshot-img" alt="Forensic snapshot" class="w-full block" />
+              <canvas id="entity-snapshot-canvas" class="absolute top-0 left-0 w-full h-full pointer-events-none"></canvas>
+            </div>
+            <button type="button" id="entity-vlm-btn" onclick="runVlmAnalysis()" class="hidden w-full py-1.5 mono text-[10px] font-bold bg-indigo-950 hover:bg-indigo-900 text-indigo-200 border border-indigo-700/50 rounded">🔍 Deep AI Vision Analysis</button>
+            <div id="entity-vlm-loading" class="hidden text-[10px] mono text-cyan-400 flex items-center gap-2 justify-center py-2">
+              <span class="inline-block w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span>
+              Running multimodal forensic analysis...
+            </div>
+            <div id="entity-vlm-report" class="hidden space-y-1 text-[10px] text-slate-300 border border-slate-800 rounded p-2 bg-slate-900/80">
+              <div id="entity-vlm-risk" class="mono font-bold text-amber-300 text-[10px]"></div>
+              <p id="entity-vlm-visual" class="leading-relaxed text-[10px]"></p>
+              <p id="entity-vlm-env" class="text-slate-400 leading-relaxed text-[10px]"></p>
+              <ul id="entity-vlm-findings" class="list-disc pl-4 space-y-0.5 text-cyan-200/90 text-[10px]"></ul>
+              <p id="entity-vlm-action" class="mono text-emerald-300 text-[10px]"></p>
+              <div id="entity-vlm-provider" class="text-[9px] text-slate-500 text-right"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1019,6 +1073,38 @@ _COP_HTML = """<!DOCTYPE html>
     <!-- MAP CONTAINER -->
     <div id="map"></div>
 
+    <div id="map-control-bar" class="absolute top-[4.25rem] left-1/2 -translate-x-1/2 z-[45] flex items-center gap-2 glass-panel rounded-lg px-2 py-1 shadow-lg">
+      <button type="button" id="btn-draw-zone" onclick="toggleZoneDrawMode()"
+        class="px-2.5 py-1 text-[11px] mono font-semibold bg-emerald-950/90 hover:bg-emerald-900 text-emerald-200 border border-emerald-600/50 rounded whitespace-nowrap">
+        [ ✏️ Draw Zone ]
+      </button>
+    </div>
+
+    <div id="draw-zone-card" class="absolute top-28 right-[25rem] z-[50] w-72 glass-panel rounded-xl shadow-2xl p-3 space-y-2">
+      <div class="mono text-xs font-bold text-emerald-300 tracking-wider">Save Pasture / Zone</div>
+      <p class="text-[10px] text-slate-400">Click the map to place vertices. Need at least 3 points.</p>
+      <label class="block text-[10px] mono text-slate-400">Zone Name</label>
+      <input id="draw-zone-name" type="text" placeholder="Alfalfa South 40"
+        class="w-full bg-slate-900 text-slate-200 text-xs px-2 py-1 rounded border border-slate-700 mono" />
+      <label class="block text-[10px] mono text-slate-400">Code</label>
+      <input id="draw-zone-code" type="text" placeholder="PASTURE-ALFALFA-S"
+        class="w-full bg-slate-900 text-slate-200 text-xs px-2 py-1 rounded border border-slate-700 mono" />
+      <label class="block text-[10px] mono text-slate-400">Type</label>
+      <select id="draw-zone-type" class="w-full bg-slate-900 text-slate-200 text-xs px-2 py-1 rounded border border-slate-700 mono">
+        <option value="pasture">Pasture</option>
+        <option value="paddock">Paddock</option>
+        <option value="wash">Wash</option>
+        <option value="restricted_zone">Restricted</option>
+        <option value="container_bay">Container Bay</option>
+      </select>
+      <label class="block text-[10px] mono text-slate-400">Color</label>
+      <input id="draw-zone-color" type="color" value="#22c55e" class="w-full h-8 rounded border border-slate-700 bg-slate-900" />
+      <div class="flex gap-2 pt-1">
+        <button type="button" onclick="completeZoneDraw()" class="flex-1 py-1.5 mono text-[10px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white rounded">Complete &amp; Save</button>
+        <button type="button" onclick="cancelZoneDraw()" class="flex-1 py-1.5 mono text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-600">Cancel</button>
+      </div>
+    </div>
+
     <!-- BOTTOM FLOATING SIMULATION & CONTROL BAR -->
     <div class="absolute bottom-3 left-3 right-3 h-12 glass-panel rounded-xl shadow-2xl z-40 flex items-center justify-between px-3 md:px-4 gap-2 whitespace-nowrap overflow-x-auto flex-nowrap">
       <div class="flex items-center gap-2 shrink-0 whitespace-nowrap flex-nowrap">
@@ -1031,6 +1117,9 @@ _COP_HTML = """<!DOCTYPE html>
         </button>
         <button onclick="runScenario('pedestrian_hike')" class="px-2.5 py-1 text-xs mono font-semibold bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-700/50 rounded transition-colors whitespace-nowrap shrink-0">
           ► Pedestrian Hike
+        </button>
+        <button onclick="simulatePredatorIncursion()" class="px-2.5 py-1 text-xs mono font-semibold bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-600/50 rounded transition-colors whitespace-nowrap shrink-0">
+          ► Predator Incursion
         </button>
         <button onclick="resetSimulation()" class="px-2.5 py-1 text-xs mono font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 rounded transition-colors whitespace-nowrap shrink-0">
           ↺ Reset All
@@ -1075,6 +1164,10 @@ _COP_HTML = """<!DOCTYPE html>
     const AUTH_USER_KEY = 'rian_user';
     const AUTH_GUEST_KEY = 'rian_guest_mode';
     let mapPickMode = false;
+    let zoneDrawMode = false;
+    let zoneDrawVertices = [];
+    let zoneDrawLayer = null;
+    let zoneDrawGuides = null;
     let authSession = { authenticated: false, guest: false, user: null };
 
     const SLA_COMPONENT_LABELS = {
@@ -1246,12 +1339,123 @@ _COP_HTML = """<!DOCTYPE html>
       }
       mapPickMode = !mapPickMode;
       if (mapPickMode) {
+        if (zoneDrawMode) toggleZoneDrawMode(false);
         map.getContainer().classList.add('map-pick-cursor');
         btn.textContent = 'Picking on map… (click to place)';
         btn.classList.add('ring-2', 'ring-amber-400');
         closeAdminModal();
       } else {
         toggleMapPickMode(false);
+      }
+    }
+
+    function clearZoneDrawGraphics() {
+      zoneDrawVertices = [];
+      if (zoneDrawLayer) {
+        map.removeLayer(zoneDrawLayer);
+        zoneDrawLayer = null;
+      }
+      if (zoneDrawGuides) {
+        map.removeLayer(zoneDrawGuides);
+        zoneDrawGuides = null;
+      }
+    }
+
+    function refreshZoneDrawGraphics() {
+      if (zoneDrawGuides) {
+        map.removeLayer(zoneDrawGuides);
+        zoneDrawGuides = null;
+      }
+      if (!zoneDrawVertices.length) return;
+      const latlngs = zoneDrawVertices.map(v => [v[1], v[0]]);
+      zoneDrawGuides = L.polyline(latlngs, {
+        color: '#34d399',
+        weight: 2,
+        dashArray: '6, 8',
+        opacity: 0.9
+      }).addTo(map);
+      if (zoneDrawVertices.length >= 3) {
+        if (zoneDrawLayer) map.removeLayer(zoneDrawLayer);
+        zoneDrawLayer = L.polygon(latlngs, {
+          color: '#34d399',
+          fillColor: '#22c55e',
+          fillOpacity: 0.15,
+          weight: 1.5,
+          dashArray: '4, 6'
+        }).addTo(map);
+      }
+    }
+
+    function toggleZoneDrawMode(forceOff) {
+      const btn = document.getElementById('btn-draw-zone');
+      const card = document.getElementById('draw-zone-card');
+      if (forceOff === false || (zoneDrawMode && forceOff !== true)) {
+        zoneDrawMode = false;
+        map.getContainer().classList.remove('map-draw-zone-cursor');
+        if (btn) btn.classList.remove('ring-2', 'ring-emerald-400');
+        if (card) card.classList.remove('open');
+        clearZoneDrawGraphics();
+        return;
+      }
+      zoneDrawMode = !zoneDrawMode;
+      if (zoneDrawMode) {
+        if (mapPickMode) toggleMapPickMode(false);
+        clearZoneDrawGraphics();
+        map.getContainer().classList.add('map-draw-zone-cursor');
+        if (btn) btn.classList.add('ring-2', 'ring-emerald-400');
+        if (card) card.classList.add('open');
+      } else {
+        toggleZoneDrawMode(false);
+      }
+    }
+
+    function cancelZoneDraw() {
+      toggleZoneDrawMode(false);
+    }
+
+    async function completeZoneDraw() {
+      if (zoneDrawVertices.length < 3) {
+        alert('Place at least 3 vertices on the map.');
+        return;
+      }
+      const name = (document.getElementById('draw-zone-name').value || '').trim();
+      const code = (document.getElementById('draw-zone-code').value || '').trim();
+      const zoneType = document.getElementById('draw-zone-type').value;
+      const color = document.getElementById('draw-zone-color').value || '#22c55e';
+      if (!name || name.length < 2) {
+        alert('Enter a zone name (min 2 characters).');
+        return;
+      }
+      if (!code || code.length < 2) {
+        alert('Enter a zone code (min 2 characters).');
+        return;
+      }
+      const ring = zoneDrawVertices.slice();
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) {
+        ring.push([first[0], first[1]]);
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/zones`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            zone_code: code,
+            zone_type: zoneType,
+            color,
+            coordinates: ring
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || 'Failed to save zone');
+        }
+        toggleZoneDrawMode(false);
+        await loadZones();
+      } catch (e) {
+        alert('Zone save failed: ' + (e.message || e));
       }
     }
 
@@ -1797,7 +2001,127 @@ _COP_HTML = """<!DOCTYPE html>
     function closeEntityModal() {
       document.getElementById('entity-modal').classList.remove('open');
       selectedTrackId = null;
+      currentEntitySnapshotId = null;
+      currentSnapshotBoxes = [];
     }
+
+    let currentEntitySnapshotId = null;
+    let currentSnapshotBoxes = [];
+
+    function resetEntitySnapshotUi() {
+      currentEntitySnapshotId = null;
+      currentSnapshotBoxes = [];
+      document.getElementById('entity-snapshot-placeholder').classList.add('hidden');
+      document.getElementById('entity-snapshot-viewer').classList.add('hidden');
+      document.getElementById('entity-vlm-btn').classList.add('hidden');
+      document.getElementById('entity-vlm-loading').classList.add('hidden');
+      document.getElementById('entity-vlm-report').classList.add('hidden');
+      document.getElementById('entity-snapshot-meta').textContent = '';
+      const img = document.getElementById('entity-snapshot-img');
+      img.removeAttribute('src');
+      img.onload = null;
+    }
+
+    function drawSnapshotBoundingBoxes() {
+      const img = document.getElementById('entity-snapshot-img');
+      const canvas = document.getElementById('entity-snapshot-canvas');
+      if (!img.naturalWidth || !currentSnapshotBoxes.length) return;
+      const rect = img.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+      canvas.style.width = rect.width + 'px';
+      canvas.style.height = rect.height + 'px';
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      currentSnapshotBoxes.forEach(box => {
+        const x = box.xmin * rect.width;
+        const y = box.ymin * rect.height;
+        const w = (box.xmax - box.xmin) * rect.width;
+        const h = (box.ymax - box.ymin) * rect.height;
+        ctx.strokeStyle = box.color || '#22c55e';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, w, h);
+        const label = `${box.label} ${Math.round((box.confidence || 0) * 100)}%`;
+        ctx.font = '10px monospace';
+        const tw = ctx.measureText(label).width + 6;
+        ctx.fillStyle = box.color || '#22c55e';
+        ctx.fillRect(x, Math.max(0, y - 14), tw, 14);
+        ctx.fillStyle = '#0f172a';
+        ctx.fillText(label, x + 3, Math.max(10, y - 4));
+      });
+    }
+
+    function showEntitySnapshotRecord(data) {
+      currentEntitySnapshotId = data.snapshot_id;
+      currentSnapshotBoxes = data.bounding_boxes || [];
+      document.getElementById('entity-snapshot-placeholder').classList.add('hidden');
+      document.getElementById('entity-snapshot-viewer').classList.remove('hidden');
+      document.getElementById('entity-vlm-btn').classList.remove('hidden');
+      const ts = data.timestamp ? new Date(data.timestamp).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : '—';
+      document.getElementById('entity-snapshot-meta').textContent =
+        `${data.camera_name || 'Camera'} · ${ts} · ${Math.round((data.confidence || 0) * 100)}%`;
+      const img = document.getElementById('entity-snapshot-img');
+      img.onload = () => drawSnapshotBoundingBoxes();
+      img.src = `${API_BASE}/api/v1/snapshots/${data.snapshot_id}/image?t=${Date.now()}`;
+      document.getElementById('entity-vlm-report').classList.add('hidden');
+    }
+
+    async function loadEntitySnapshot(trackId) {
+      resetEntitySnapshotUi();
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/cop/entity/${trackId}/snapshot`);
+        if (res.status === 404) {
+          document.getElementById('entity-snapshot-placeholder').classList.remove('hidden');
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Snapshot load failed');
+        showEntitySnapshotRecord(data);
+      } catch (e) {
+        document.getElementById('entity-snapshot-placeholder').classList.remove('hidden');
+      }
+    }
+
+    async function generateTestSnapshot() {
+      if (!selectedTrackId) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/cop/entity/${selectedTrackId}/snapshot`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Generate failed');
+        showEntitySnapshotRecord(data);
+      } catch (e) {
+        alert(String(e.message || e));
+      }
+    }
+
+    async function runVlmAnalysis() {
+      if (!currentEntitySnapshotId) return;
+      document.getElementById('entity-vlm-loading').classList.remove('hidden');
+      document.getElementById('entity-vlm-report').classList.add('hidden');
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/snapshots/${currentEntitySnapshotId}/vlm-analyze`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'VLM analysis failed');
+        document.getElementById('entity-vlm-risk').textContent = data.risk_assessment || '—';
+        document.getElementById('entity-vlm-visual').textContent = data.visual_description || '';
+        document.getElementById('entity-vlm-env').textContent = data.environmental_context || '';
+        const findings = data.findings || [];
+        document.getElementById('entity-vlm-findings').innerHTML = findings.map(f => `<li>${escapeHtml(f)}</li>`).join('');
+        document.getElementById('entity-vlm-action').textContent = data.recommended_action ? '→ ' + data.recommended_action : '';
+        document.getElementById('entity-vlm-provider').textContent = data.provider ? 'Vision: ' + data.provider : '';
+        document.getElementById('entity-vlm-report').classList.remove('hidden');
+      } catch (e) {
+        alert(String(e.message || e));
+      } finally {
+        document.getElementById('entity-vlm-loading').classList.add('hidden');
+      }
+    }
+
+    window.addEventListener('resize', () => {
+      if (currentEntitySnapshotId) drawSnapshotBoundingBoxes();
+    });
 
     async function openEntityInspector(trackId, lat, lon) {
       selectedTrackId = trackId;
@@ -1809,6 +2133,8 @@ _COP_HTML = """<!DOCTYPE html>
       document.getElementById('entity-actions').innerHTML = '';
       document.getElementById('entity-telemetry').innerHTML = '';
       document.getElementById('entity-provider').textContent = '';
+      resetEntitySnapshotUi();
+      loadEntitySnapshot(trackId);
       try {
         const res = await fetch(`${API_BASE}/api/v1/cop/entity/${trackId}/insight`, { method: 'POST' });
         const data = await res.json();
@@ -1875,10 +2201,12 @@ _COP_HTML = """<!DOCTYPE html>
       choke: L.layerGroup().addTo(map),
       tracks: L.layerGroup().addTo(map),
       sensors: L.layerGroup().addTo(map),
-      entities: L.layerGroup().addTo(map)
+      entities: L.layerGroup().addTo(map),
+      predators: L.layerGroup().addTo(map)
     };
 
     let currentState = null;
+    let lastPredatorSummary = null;
 
     // Clock
     setInterval(() => {
@@ -1891,6 +2219,11 @@ _COP_HTML = """<!DOCTYPE html>
     map.on('click', async (e) => {
       const lon = e.latlng.lng;
       const lat = e.latlng.lat;
+      if (zoneDrawMode) {
+        zoneDrawVertices.push([lon, lat]);
+        refreshZoneDrawGraphics();
+        return;
+      }
       if (mapPickMode) {
         document.getElementById('cam-lon').value = lon.toFixed(6);
         document.getElementById('cam-lat').value = lat.toFixed(6);
@@ -2148,11 +2481,103 @@ _COP_HTML = """<!DOCTYPE html>
       }
     }
 
+    function trackLatLngById(trackId) {
+      const kin = trackKinematics.get(trackId);
+      if (kin) {
+        const pos = projectedPosition(kin, Date.now());
+        return [pos.lat, pos.lon];
+      }
+      const tracks = (currentState && currentState.tracks) || [];
+      const row = tracks.find(t => (t.track_id || t.id) === trackId);
+      if (row && row.last_known_point) {
+        return [row.last_known_point[1], row.last_known_point[0]];
+      }
+      return null;
+    }
+
+    function renderPredatorThreatUi(summary) {
+      lastPredatorSummary = summary;
+      const banner = document.getElementById('predator-alert-banner');
+      layers.predators.clearLayers();
+      const threats = (summary && summary.threats) || [];
+      if (!threats.length) {
+        banner.classList.add('hidden');
+        banner.innerHTML = '';
+        return;
+      }
+      const primary = threats[0];
+      const clsLabel = (primary.predator_class || 'predator').replace(/^./, c => c.toUpperCase());
+      banner.classList.remove('hidden');
+      banner.innerHTML = `⚠️ PREDATOR ALERT: ${escapeHtml(clsLabel)} ${primary.distance_meters.toFixed(0)}m from ${escapeHtml(primary.nearest_livestock_code)}
+        <button type="button" onclick="triggerDeterrent('${primary.threat_id}')" class="px-2 py-0.5 rounded bg-red-900 hover:bg-red-800 border border-red-400 text-red-50 text-[10px] font-bold">🔊 Sound Siren</button>`;
+
+      threats.forEach(threat => {
+        const predId = threat.predator_track_id;
+        const herdId = threat.nearest_livestock_id;
+        const predLl = trackLatLngById(predId);
+        const herdLl = trackLatLngById(herdId);
+        if (!predLl || !herdLl) return;
+        const line = L.polyline([predLl, herdLl], {
+          color: '#dc2626',
+          weight: 3,
+          dashArray: '8, 10',
+          className: 'predator-threat-line'
+        }).addTo(layers.predators);
+        const midLat = (predLl[0] + herdLl[0]) / 2;
+        const midLon = (predLl[1] + herdLl[1]) / 2;
+        L.marker([midLat, midLon], {
+          icon: L.divIcon({
+            className: 'predator-threat-label',
+            html: `<div style="background:rgba(127,29,29,0.92);color:#fecaca;padding:2px 6px;border-radius:4px;font-size:10px;font-family:monospace;border:1px solid #f87171;">${threat.distance_meters.toFixed(0)}m</div>`,
+            iconSize: [48, 18],
+            iconAnchor: [24, 9]
+          }),
+          interactive: false
+        }).addTo(layers.predators);
+        line.bringToFront();
+      });
+    }
+
+    async function refreshPredatorThreats() {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/predators/threats`);
+        if (!res.ok) return;
+        const summary = await res.json();
+        renderPredatorThreatUi(summary);
+      } catch (e) {
+        console.warn('predator threats fetch failed', e);
+      }
+    }
+
+    async function triggerDeterrent(threatId) {
+      await fetch(`${API_BASE}/api/v1/predators/${threatId}/trigger-deterrent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deterrent_type: 'acoustic_siren' })
+      });
+      await refreshPredatorThreats();
+    }
+
+    async function simulatePredatorIncursion() {
+      const btn = event && event.target;
+      const originalText = btn ? btn.textContent : '';
+      if (btn) btn.textContent = 'Seeding...';
+      try {
+        await fetch(`${API_BASE}/api/v1/predators/simulate-incursion`, { method: 'POST' });
+        await loadState();
+        await refreshPredatorThreats();
+        await fetchAiSitrep();
+      } finally {
+        if (btn) btn.textContent = originalText;
+      }
+    }
+
     async function loadState() {
       try {
         const res = await fetch(`${API_BASE}/api/v1/cop/state`);
         const state = await res.json();
         renderState(state);
+        await refreshPredatorThreats();
       } catch (e) {
         console.error('Error fetching state:', e);
       }

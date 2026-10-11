@@ -45,6 +45,9 @@ This repository is organized to allow multiple specialized subagents to work in 
 | **13** | Modular Domain Profiles & Spatial Zones | `specs/13-modular-domain-profiles.md` | Spec 00, 02 | `VERIFIED` | Geospatial DB & Routing Agent |
 | **14** | Dynamic Kinematic Visualization & Halos | `specs/14-dynamic-kinematic-visualization.md` | Spec 00, 04, 13 | `VERIFIED` | Web & Operations Agent |
 | **15** | Entity-Targeted LLM Diagnostics | `specs/15-entity-targeted-llm-diagnostics.md` | Spec 00, 09, 13 | `VERIFIED` | Intelligence & LLM Agent |
+| **16** | Multimodal VLM Forensic Inspector | `specs/16-vlm-forensic-snapshot-inspector.md` | Spec 00, 01, 15 | `VERIFIED` | Ingestion & Vision Agent |
+| **17** | Predator Threat Detection & Deterrents | `specs/17-predator-threat-detection.md` | Spec 00, 03, 13 | `VERIFIED` | Wildlife & Alert Agent |
+| **18** | Interactive Pasture & Virtual Fence Editor | `specs/18-interactive-pasture-fence-editor.md` | Spec 00, 02, 13 | `VERIFIED` | Web & Operations Agent |
 
 ### Status Definitions
 - `DRAFT`: Under specification; not ready for agent implementation.

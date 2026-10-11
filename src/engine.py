@@ -197,6 +197,12 @@ class RianEngine:
                     track_state.object_class.value,
                 )
 
+                try:
+                    from src.ingestion.vlm_inspector import get_vlm_inspector
+                    get_vlm_inspector().link_track_snapshot(track_state.track_id, event.event_id)
+                except Exception:
+                    pass
+
                 if track_state.status == TrackStatus.ACTIVE and interceptor_pos:
                     directive = await self.solver.solve(
                         track_id=track_state.track_id,

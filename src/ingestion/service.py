@@ -118,6 +118,37 @@ class IngestionService:
             raw_image_path=image_path,
             processed_latency_ms=latency_ms,
         )
+
+        try:
+            from src.ingestion.vlm_inspector import BoundingBoxOverlay, get_vlm_inspector
+
+            overlays = [
+                BoundingBoxOverlay(
+                    label=d.object_class.value,
+                    confidence=d.confidence,
+                    ymin=d.bounding_box.ymin,
+                    xmin=d.bounding_box.xmin,
+                    ymax=d.bounding_box.ymax,
+                    xmax=d.bounding_box.xmax,
+                    color="#22c55e" if d.object_class.value in ("cow", "horse") else "#ef4444",
+                )
+                for d in detections
+            ]
+            if detections:
+                primary = detections[0]
+                get_vlm_inspector().record_snapshot(
+                    sensor_id=sensor.id,
+                    camera_name=sensor.node_name,
+                    entity_class=primary.object_class.value,
+                    confidence=primary.confidence,
+                    bounding_boxes=overlays,
+                    image_bytes=inbound.image_bytes,
+                    timestamp=inbound.received_at,
+                    snapshot_id=event_ids[0],
+                )
+        except Exception:
+            logger.debug("Failed registering snapshot with VlmForensicInspector", exc_info=True)
+
         await self._dispatch(processed)
         return processed
 
