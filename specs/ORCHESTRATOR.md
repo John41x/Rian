@@ -21,6 +21,7 @@ This repository is organized to allow multiple specialized subagents to work in 
 2. **Interface Isolation:** Each module communicates via strictly typed data contracts (SQL schemas, GeoJSON, and Pydantic message envelopes).
 3. **Synthetic Self-Sufficiency:** Every module implementation must run and pass tests against the synthetic test harness (`specs/05-simulation-harness.md`) without requiring physical hardware or internet access.
 4. **Specification Status Tracking:** When an agent picks up a spec, it updates the module registry in this document from `READY` to `IN_PROGRESS`, and to `VERIFIED` once unit/integration tests pass.
+5. **Clean-Room Engineering & Zero AGPL Contamination:** Under no circumstances may subagents copy source code from AGPL-3.0 repositories (`ultralytics`, `yolo_tracking`/BoxMOT, etc.). Mathematical algorithms (Tobler, Eikonal, Dijkstra, HMM, Cosine similarity) and public schemas (Cursor-on-Target XML) must be authored as 100% clean-room implementations using standard MIT/Apache/BSD primitives. Inference pipelines must support ONNX Runtime (MIT) to ensure the platform passes enterprise compliance audits (Black Duck, FOSSA, Snyk).
 
 ---
 
@@ -34,6 +35,10 @@ This repository is organized to allow multiple specialized subagents to work in 
 | **03** | Kinematic Tracking Engine | `specs/03-kinematic-tracking-engine.md` | Spec 00, 02 | `VERIFIED` | Algorithm & Math Agent |
 | **04** | Interception & Dispatch | `specs/04-tactical-interception-dispatch.md` | Spec 00, 02, 03 | `VERIFIED` | Tactical Dispatch Agent |
 | **05** | Simulation & Validation Harness | `specs/05-simulation-harness.md` | Spec 00 | `VERIFIED` | QA & Simulation Agent |
+| **06** | Cursor-on-Target (CoT) & ATAK | `specs/06-cursor-on-target-cot.md` | Spec 00, 04 | `VERIFIED` | Tactical Dispatch Agent |
+| **07** | Cross-Camera Appearance Re-ID | `specs/07-cross-camera-reid.md` | Spec 00, 01, 03 | `VERIFIED` | Ingestion & CV Agent |
+| **08** | PostGIS HMM Road Snapping | `specs/08-postgis-hmm-mapmatching.md` | Spec 00, 02, 03 | `VERIFIED` | Geospatial DB Agent |
+| **09** | Tactical LLM & Verified SITREP | `specs/09-tactical-llm-sitrep.md` | Spec 00, 04 | `VERIFIED` | Intelligence & LLM Agent |
 
 ### Status Definitions
 - `DRAFT`: Under specification; not ready for agent implementation.

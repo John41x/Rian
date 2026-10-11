@@ -12,6 +12,7 @@ from PIL import Image
 
 from src.common.config import settings
 from src.common.schemas import BoundingBox, DetectionItem, EntityClass
+from src.tracking.reid import OSNetFeatureExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class YOLOInferenceProcessor:
     def __init__(self, config: Optional[InferenceConfig] = None) -> None:
         self.config = config or InferenceConfig()
         self._model = None
+        self._reid_extractor: Optional[OSNetFeatureExtractor] = None
         self._mock_mode = self.config.force_mock or _env_mock_enabled()
 
     def _ensure_model(self) -> bool:
@@ -52,6 +54,11 @@ class YOLOInferenceProcessor:
             )
             self._mock_mode = True
             return False
+
+    def _reid_extractor_instance(self) -> OSNetFeatureExtractor:
+        if self._reid_extractor is None:
+            self._reid_extractor = OSNetFeatureExtractor()
+        return self._reid_extractor
 
     def predict(self, image_bytes: bytes) -> List[DetectionItem]:
         if self._ensure_model():
@@ -95,12 +102,12 @@ class YOLOInferenceProcessor:
                     bounding_box=bbox,
                 )
             )
-        return detections
+        return self._attach_reid_embeddings(image, detections)
 
     def _predict_mock(self, image_bytes: bytes) -> List[DetectionItem]:
         """Deterministic mock output for unit tests when weights are unavailable."""
-        _ = image_bytes
-        return [
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        detections = [
             DetectionItem(
                 object_class=EntityClass.PERSON,
                 confidence=0.92,
@@ -109,6 +116,29 @@ class YOLOInferenceProcessor:
                 ),
             )
         ]
+        return self._attach_reid_embeddings(image, detections)
+
+    def _attach_reid_embeddings(
+        self, image: Image.Image, detections: List[DetectionItem]
+    ) -> List[DetectionItem]:
+        if not detections:
+            return detections
+        extractor = self._reid_extractor_instance()
+        enriched: List[DetectionItem] = []
+        for det in detections:
+            crop = _crop_normalized_bbox(image, det.bounding_box)
+            embedding = extractor.extract(crop)
+            enriched.append(det.model_copy(update={"reid_embedding": embedding}))
+        return enriched
+
+
+def _crop_normalized_bbox(image: Image.Image, bbox: BoundingBox) -> Image.Image:
+    width, height = image.size
+    left = max(0, min(width - 1, int(bbox.xmin * width)))
+    right = max(left + 1, min(width, int(bbox.xmax * width)))
+    top = max(0, min(height - 1, int(bbox.ymin * height)))
+    bottom = max(top + 1, min(height, int(bbox.ymax * height)))
+    return image.crop((left, top, right, bottom))
 
 
 def _normalize_xyxy(

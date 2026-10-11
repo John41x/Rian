@@ -62,9 +62,19 @@ CREATE TABLE IF NOT EXISTS entity_tracks (
     history_linestring GEOMETRY(LineString, 4326),
     reachability_polygon GEOMETRY(Polygon, 4326),-- Latest dynamic isochrone
     confidence_score DOUBLE PRECISION DEFAULT 1.0,
+    last_reid_embedding DOUBLE PRECISION[],
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'entity_tracks' AND column_name = 'last_reid_embedding'
+    ) THEN
+        ALTER TABLE entity_tracks ADD COLUMN last_reid_embedding DOUBLE PRECISION[];
+    END IF;
+END$$;
 CREATE INDEX IF NOT EXISTS idx_entity_tracks_spatial ON entity_tracks USING GIST(last_known_point);
 CREATE INDEX IF NOT EXISTS idx_entity_tracks_polygon ON entity_tracks USING GIST(reachability_polygon);
 CREATE INDEX IF NOT EXISTS idx_entity_tracks_status ON entity_tracks(current_status);

@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     # Mapbox
     MAPBOX_ACCESS_TOKEN: Optional[str] = None
 
+    # LLM Tactical Copilot
+    OPENAI_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
+    DEEPSEEK_API_KEY: Optional[str] = None
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    LLM_MODEL: str = "deepseek-chat"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property

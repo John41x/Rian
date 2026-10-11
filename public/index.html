@@ -11,7 +11,7 @@
     body, html { font-family: 'Inter', sans-serif; height: 100%; margin: 0; background: #030712; color: #f3f4f6; overflow: hidden; }
     .mono { font-family: 'JetBrains Mono', monospace; }
     #map { height: 100%; width: 100%; z-index: 1; }
-    .glass-panel { background: rgba(10, 15, 30, 0.88); backdrop-filter: blur(12px); border: 1px solid rgba(56, 189, 248, 0.2); }
+    .glass-panel { background: rgba(10, 15, 30, 0.90); backdrop-filter: blur(14px); border: 1px solid rgba(56, 189, 248, 0.22); }
     .pulse-target { animation: pulseRing 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite; }
     @keyframes pulseRing {
       0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
@@ -20,6 +20,10 @@
     }
     .leaflet-popup-content-wrapper { background: rgba(15, 23, 42, 0.95) !important; color: #f8fafc !important; border: 1px solid #38bdf8; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
     .leaflet-popup-tip { background: #0f172a !important; }
+    .dark-tiles { filter: brightness(0.65) invert(1) contrast(2.8) hue-rotate(200deg) saturate(0.35) brightness(0.75); }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+    ::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.3); border-radius: 4px; }
   </style>
 </head>
 <body class="flex flex-col h-screen select-none">
@@ -56,6 +60,13 @@
         <div class="text-[10px] text-slate-400 uppercase">Directives</div>
         <div id="kpi-directives" class="font-bold text-amber-400 text-sm">0</div>
       </div>
+
+      <!-- BASEMAP SWITCHER -->
+      <div class="flex items-center bg-slate-900 border border-slate-700 rounded p-0.5 text-[10px]">
+        <button id="btn-satellite" onclick="switchBasemap('satellite')" class="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 font-bold border border-cyan-700/50">🛰 Satellite</button>
+        <button id="btn-dark" onclick="switchBasemap('dark')" class="px-2 py-0.5 rounded text-slate-400 hover:text-slate-200">⬛ Tactical</button>
+      </div>
+
       <div class="text-right pl-3 border-l border-slate-800 hidden md:block">
         <div id="clock-utc" class="text-xs font-bold text-cyan-300">00:00:00 UTC</div>
         <div id="clock-local" class="text-[10px] text-slate-400">00:00:00 LOCAL</div>
@@ -74,7 +85,6 @@
         <span id="fleet-count" class="text-[10px] mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800/40">6 NODES</span>
       </div>
       <div id="sensors-list" class="flex-1 overflow-y-auto p-2.5 space-y-2 text-xs">
-        <!-- Rendered dynamically -->
         <div class="text-slate-500 text-center py-6">Connecting to sensor fabric...</div>
       </div>
 
@@ -83,31 +93,66 @@
           <span>STRATEGIC CHOKEPOINTS</span>
           <span class="text-[10px] text-sky-400">PERIMETER</span>
         </div>
-        <div id="chokepoints-mini" class="grid grid-cols-2 gap-1 text-[10px] mono text-slate-400">
-          <!-- Filled dynamically -->
-        </div>
+        <div id="chokepoints-mini" class="grid grid-cols-2 gap-1 text-[10px] mono text-slate-400"></div>
       </div>
     </aside>
 
-    <!-- RIGHT SIDEBAR: DIRECTIVES & THREAT TRACKER -->
-    <aside id="right-sidebar" class="absolute top-3 right-3 bottom-16 w-88 glass-panel rounded-xl shadow-2xl z-40 flex flex-col transition-all duration-300">
-      <div class="p-3 border-b border-cyan-900/40 flex items-center justify-between">
-        <span class="mono text-xs font-bold text-red-400 tracking-wider">TACTICAL DIRECTIVES // THREATS</span>
-        <span id="threat-indicator" class="text-[10px] mono bg-slate-900 text-slate-400 px-2 py-0.5 rounded border border-slate-700">STANDBY</span>
+    <!-- RIGHT SIDEBAR: AI COPILOT & THREAT DIRECTIVES -->
+    <aside id="right-sidebar" class="absolute top-3 right-3 bottom-16 w-96 glass-panel rounded-xl shadow-2xl z-40 flex flex-col transition-all duration-300">
+
+      <!-- AI SITREP CARD -->
+      <div class="p-3 border-b border-cyan-900/40 bg-slate-950/40">
+        <div class="flex items-center justify-between mb-1.5">
+          <div class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+            <span class="mono text-xs font-bold text-cyan-300 tracking-wider">AI TACTICAL COPILOT</span>
+          </div>
+          <button onclick="fetchAiSitrep()" title="Regenerate SITREP" class="text-[10px] mono bg-cyan-950 hover:bg-cyan-900 text-cyan-300 px-2 py-0.5 rounded border border-cyan-700/50">⚡ SITREP</button>
+        </div>
+
+        <div id="ai-sitrep-card" class="bg-slate-900/90 rounded-lg p-2.5 border border-cyan-900/40 text-xs">
+          <div class="flex items-center justify-between">
+            <span id="sitrep-badge" class="mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/50">DEFCON 5 // SECURE</span>
+            <span id="sitrep-time" class="mono text-[10px] text-slate-400">--:--:-- UTC</span>
+          </div>
+          <div id="sitrep-headline" class="mono font-bold text-slate-200 mt-1.5 text-[11px]">Perimeter Secure</div>
+          <p id="sitrep-summary" class="text-slate-300 text-[11px] leading-relaxed mt-1">
+            Analyzing spatial telemetry and evaluating kinematic gating envelopes across acreage...
+          </p>
+          <div id="sitrep-actions" class="mt-2 space-y-1 text-[10px] mono text-cyan-300"></div>
+          <div id="sitrep-provider" class="text-[9px] mono text-slate-500 mt-2 border-t border-slate-800 pt-1 text-right">Engine: Local Tactical Reasoner</div>
+        </div>
+
+        <!-- NATURAL LANGUAGE OPERATOR COMMS -->
+        <div class="mt-2 flex gap-1">
+          <input id="ai-query-input" type="text" placeholder="Ask Tactical Copilot (e.g. Risk at North Gate?)..." 
+                 onkeydown="if(event.key==='Enter') sendAiQuery()"
+                 class="flex-1 bg-slate-900 text-slate-200 text-xs px-2.5 py-1 rounded border border-slate-700 outline-none focus:border-cyan-500 mono" />
+          <button onclick="sendAiQuery()" class="px-2 py-1 bg-cyan-700 hover:bg-cyan-600 text-white mono text-xs font-bold rounded">Ask</button>
+        </div>
+        <div id="ai-query-output" class="hidden mt-1.5 p-2 bg-slate-900/95 border border-cyan-600/50 rounded text-[11px] mono text-cyan-200"></div>
       </div>
 
       <!-- DIRECTIVES FEED -->
-      <div id="directives-container" class="p-2.5 space-y-2 border-b border-cyan-900/30 max-h-56 overflow-y-auto">
-        <div class="text-slate-500 text-xs text-center py-4">No active intercept directives</div>
+      <div class="p-2 border-b border-cyan-900/30">
+        <div class="flex items-center justify-between px-1 mb-1">
+          <span class="mono text-[11px] font-bold text-amber-400">TACTICAL DIRECTIVES</span>
+          <span id="threat-indicator" class="text-[9px] mono bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700">STANDBY</span>
+        </div>
+        <div id="directives-container" class="space-y-1.5 max-h-40 overflow-y-auto">
+          <div class="text-slate-500 text-xs text-center py-2">No active intercept directives</div>
+        </div>
       </div>
 
       <!-- ACTIVE TRACKS -->
-      <div class="px-3 pt-2 pb-1 text-[11px] mono text-slate-400 font-semibold flex items-center justify-between">
-        <span>KINEMATIC TRACKS (HMM)</span>
-        <span id="active-tracks-count" class="text-red-400">0 ACTIVE</span>
-      </div>
-      <div id="tracks-list" class="flex-1 overflow-y-auto p-2.5 space-y-2 text-xs">
-        <div class="text-slate-500 text-center py-6">Perimeter secure. Zero unassociated radar gates.</div>
+      <div class="flex-1 overflow-y-auto p-2.5 flex flex-col">
+        <div class="px-1 mb-1 text-[11px] mono text-slate-400 font-semibold flex items-center justify-between">
+          <span>KINEMATIC TRACKS (HMM)</span>
+          <span id="active-tracks-count" class="text-red-400">0 ACTIVE</span>
+        </div>
+        <div id="tracks-list" class="flex-1 overflow-y-auto space-y-1.5 text-xs">
+          <div class="text-slate-500 text-center py-4">Perimeter secure. Zero unassociated radar gates.</div>
+        </div>
       </div>
     </aside>
 
@@ -171,14 +216,38 @@
       }
     }
 
-    // Map initialization with dark tactical tiles
+    // Map initialization
     const map = L.map('map', { zoomControl: false }).setView([36.745, -119.82], 13);
     L.control.zoom({ position: 'topright' }).addTo(map);
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    // Basemap layers
+    const satelliteTile = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 19,
-      attribution: '&copy; CartoDB &copy; OpenStreetMap'
+      attribution: '&copy; Esri World Imagery'
     }).addTo(map);
+
+    const darkTile = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      className: 'dark-tiles',
+      attribution: '&copy; OpenStreetMap'
+    });
+
+    let currentBasemap = 'satellite';
+    function switchBasemap(mode) {
+      if (mode === 'dark' && currentBasemap !== 'dark') {
+        map.removeLayer(satelliteTile);
+        map.addLayer(darkTile);
+        document.getElementById('btn-dark').className = 'px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 font-bold border border-cyan-700/50';
+        document.getElementById('btn-satellite').className = 'px-2 py-0.5 rounded text-slate-400 hover:text-slate-200';
+        currentBasemap = 'dark';
+      } else if (mode === 'satellite' && currentBasemap !== 'satellite') {
+        map.removeLayer(darkTile);
+        map.addLayer(satelliteTile);
+        document.getElementById('btn-satellite').className = 'px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 font-bold border border-cyan-700/50';
+        document.getElementById('btn-dark').className = 'px-2 py-0.5 rounded text-slate-400 hover:text-slate-200';
+        currentBasemap = 'satellite';
+      }
+    }
 
     const layers = {
       sensors: L.layerGroup().addTo(map),
@@ -232,10 +301,10 @@
       document.getElementById('active-tracks-count').textContent = tracks.length + ' ACTIVE';
 
       if (directives.length > 0) {
-        document.getElementById('threat-indicator').className = 'text-[10px] mono bg-red-950 text-red-300 px-2 py-0.5 rounded border border-red-500 animate-pulse';
+        document.getElementById('threat-indicator').className = 'text-[9px] mono bg-red-950 text-red-300 px-1.5 py-0.5 rounded border border-red-500 animate-pulse';
         document.getElementById('threat-indicator').textContent = 'DIRECTIVE ACTIVE';
       } else {
-        document.getElementById('threat-indicator').className = 'text-[10px] mono bg-slate-900 text-slate-400 px-2 py-0.5 rounded border border-slate-700';
+        document.getElementById('threat-indicator').className = 'text-[9px] mono bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700';
         document.getElementById('threat-indicator').textContent = 'STANDBY';
       }
 
@@ -400,6 +469,52 @@
       map.flyTo([lat, lon], 15, { animate: true, duration: 1 });
     }
 
+    async function fetchAiSitrep() {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/cop/ai-sitrep`, { method: 'POST' });
+        const report = await res.json();
+        document.getElementById('sitrep-badge').textContent = report.threat_level || 'DEFCON 5 // SECURE';
+        if ((report.threat_level || '').includes('RED') || (report.threat_level || '').includes('2')) {
+          document.getElementById('sitrep-badge').className = 'mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-700/50 animate-pulse';
+        } else {
+          document.getElementById('sitrep-badge').className = 'mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/50';
+        }
+        document.getElementById('sitrep-time').textContent = report.timestamp || '';
+        document.getElementById('sitrep-headline').textContent = report.headline || '';
+        document.getElementById('sitrep-summary').textContent = report.summary || '';
+        if (report.action_items && report.action_items.length) {
+          document.getElementById('sitrep-actions').innerHTML = report.action_items.map(a => `<div>• ${a}</div>`).join('');
+        } else {
+          document.getElementById('sitrep-actions').innerHTML = '';
+        }
+        if (report.provider) {
+          document.getElementById('sitrep-provider').textContent = 'Engine: ' + report.provider;
+        }
+      } catch (e) {
+        console.error('Error fetching SITREP:', e);
+      }
+    }
+
+    async function sendAiQuery() {
+      const inp = document.getElementById('ai-query-input');
+      const val = inp.value.trim();
+      if (!val) return;
+      const out = document.getElementById('ai-query-output');
+      out.classList.remove('hidden');
+      out.textContent = 'Tactical Copilot reasoning...';
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/cop/ai-query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: val })
+        });
+        const data = await res.json();
+        out.innerHTML = `<b>&gt; ${data.query}</b><br><span class="text-slate-200 mt-1 block">${data.response}</span>`;
+      } catch (e) {
+        out.textContent = 'Error connecting to Tactical Copilot.';
+      }
+    }
+
     async function loadState() {
       try {
         const res = await fetch(`${API_BASE}/api/v1/cop/state`);
@@ -417,6 +532,7 @@
         body: JSON.stringify({ status })
       });
       loadState();
+      fetchAiSitrep();
     }
 
     async function runScenario(name) {
@@ -429,7 +545,8 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name })
         });
-        loadState();
+        await loadState();
+        await fetchAiSitrep();
       } finally {
         btn.textContent = originalText;
       }
@@ -437,7 +554,8 @@
 
     async function resetSimulation() {
       await fetch(`${API_BASE}/api/v1/sim/reset`, { method: 'POST' });
-      loadState();
+      await loadState();
+      await fetchAiSitrep();
     }
 
     async function injectDetection() {
@@ -448,14 +566,21 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ camera_name, entity_class })
       });
-      loadState();
+      await loadState();
+      await fetchAiSitrep();
     }
 
     // Initial load and SSE stream
-    loadState();
+    loadState().then(() => fetchAiSitrep());
     const es = new EventSource(`${API_BASE}/api/v1/cop/stream`);
-    es.addEventListener('cop_state', e => renderState(JSON.parse(e.data)));
-    es.addEventListener('cop_update', () => loadState());
+    es.addEventListener('cop_state', e => {
+      renderState(JSON.parse(e.data));
+      fetchAiSitrep();
+    });
+    es.addEventListener('cop_update', () => {
+      loadState();
+      fetchAiSitrep();
+    });
   </script>
 </body>
 </html>

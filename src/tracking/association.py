@@ -6,7 +6,7 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -24,6 +24,7 @@ from src.tracking.constants import (
     VISUAL_SIMILAR_CLASS_PROB,
 )
 from src.tracking.gating import evaluate_spatiotemporal_gate
+from src.tracking.reid import cosine_similarity
 from src.tracking.isochrone import (
     build_local_friction_window,
     compute_reachability_geojson,
@@ -60,6 +61,7 @@ class DetectionAssociationInput:
     object_class: EntityClass
     sensor_id: Optional[UUID] = None
     confidence: float = 1.0
+    reid_embedding: Optional[List[float]] = None
 
 
 @dataclass
@@ -73,13 +75,17 @@ class ActiveTrackRow:
     estimated_heading_deg: Optional[float]
     estimated_velocity_ms: Optional[float]
     confidence_score: float
+    last_reid_embedding: Optional[List[float]] = None
 
 
-def visual_association_probability(
+_REID_CLASS_WEIGHT = 0.3
+_REID_APPEARANCE_WEIGHT = 0.7
+
+
+def _class_association_probability(
     detection_class: EntityClass,
     track_class: EntityClass,
 ) -> float:
-    """P_visual(c_k | T_j) per spec §3.2."""
     if detection_class == track_class:
         return 1.0
     pair = frozenset({detection_class, track_class})
@@ -88,6 +94,20 @@ def visual_association_probability(
     if pair in _SIMILAR_CLASS_PAIRS:
         return VISUAL_SIMILAR_CLASS_PROB
     return 0.0
+
+
+def visual_association_probability(
+    detection_class: EntityClass,
+    track_class: EntityClass,
+    detection_reid: Optional[Sequence[float]] = None,
+    track_reid: Optional[Sequence[float]] = None,
+) -> float:
+    """P_visual(c_k | T_j) with optional hybrid class + Re-ID appearance (spec 07)."""
+    p_class = _class_association_probability(detection_class, track_class)
+    if detection_reid is not None and track_reid is not None:
+        appearance = max(0.0, cosine_similarity(detection_reid, track_reid))
+        return _REID_CLASS_WEIGHT * p_class + _REID_APPEARANCE_WEIGHT * appearance
+    return p_class
 
 
 def spatial_association_probability(
@@ -126,7 +146,12 @@ def compute_association_score(
     if not gate.reachable:
         return 0.0, False
 
-    p_visual = visual_association_probability(detection.object_class, track.object_class)
+    p_visual = visual_association_probability(
+        detection.object_class,
+        track.object_class,
+        detection.reid_embedding,
+        track.last_reid_embedding,
+    )
     if p_visual <= 0:
         return 0.0, True
 
@@ -192,7 +217,8 @@ class TrackAssociator:
                 ST_Y(last_known_point::geometry) AS lat,
                 estimated_heading_deg,
                 estimated_velocity_ms,
-                confidence_score
+                confidence_score,
+                last_reid_embedding
             FROM entity_tracks
             WHERE current_status = 'ACTIVE'
             """
@@ -211,6 +237,7 @@ class TrackAssociator:
                     estimated_heading_deg=row["estimated_heading_deg"],
                     estimated_velocity_ms=row["estimated_velocity_ms"],
                     confidence_score=float(row["confidence_score"] or 1.0),
+                    last_reid_embedding=_pg_array_to_embedding(row.get("last_reid_embedding")),
                 )
             )
         return rows
@@ -287,7 +314,12 @@ class TrackAssociator:
                 if not gate.reachable:
                     continue
 
-                p_visual = visual_association_probability(detection.object_class, track.object_class)
+                p_visual = visual_association_probability(
+                    detection.object_class,
+                    track.object_class,
+                    detection.reid_embedding,
+                    track.last_reid_embedding,
+                )
                 if p_visual <= 0:
                     continue
 
@@ -378,6 +410,7 @@ class TrackAssociator:
             "heading": heading,
             "velocity": velocity,
             "confidence": min(1.0, max(detection.confidence, association_score)),
+            "last_reid_embedding": detection.reid_embedding,
         }
         if poly_wkt:
             sql = text(
@@ -390,6 +423,7 @@ class TrackAssociator:
                     estimated_heading_deg = :heading,
                     estimated_velocity_ms = :velocity,
                     confidence_score = :confidence,
+                    last_reid_embedding = :last_reid_embedding,
                     history_linestring = CASE
                         WHEN history_linestring IS NULL THEN
                             ST_SetSRID(ST_MakeLine(
@@ -419,6 +453,7 @@ class TrackAssociator:
                     estimated_heading_deg = :heading,
                     estimated_velocity_ms = :velocity,
                     confidence_score = :confidence,
+                    last_reid_embedding = :last_reid_embedding,
                     history_linestring = CASE
                         WHEN history_linestring IS NULL THEN
                             ST_SetSRID(ST_MakeLine(
@@ -450,6 +485,7 @@ class TrackAssociator:
             estimated_velocity_ms=velocity,
             confidence_score=min(1.0, max(detection.confidence, association_score)),
             reachability_geojson=geojson,
+            last_reid_embedding=detection.reid_embedding,
         )
 
     async def _create_track(
@@ -486,6 +522,7 @@ class TrackAssociator:
             "lon": detection.detection_lon,
             "lat": detection.detection_lat,
             "confidence": detection.confidence,
+            "last_reid_embedding": detection.reid_embedding,
         }
         if poly_wkt:
             sql = text(
@@ -494,7 +531,8 @@ class TrackAssociator:
                     id, track_code, object_class, current_status,
                     first_detected_at, last_detected_at, last_sensor_id,
                     last_known_point, estimated_heading_deg, estimated_velocity_ms,
-                    history_linestring, reachability_polygon, confidence_score
+                    history_linestring, reachability_polygon, confidence_score,
+                    last_reid_embedding
                 ) VALUES (
                     :id, :track_code, :object_class, 'ACTIVE',
                     :first_detected_at, :last_detected_at, :sensor_id,
@@ -502,7 +540,8 @@ class TrackAssociator:
                     NULL, NULL,
                     ST_SetSRID(ST_MakeLine(ST_MakePoint(:lon, :lat), ST_MakePoint(:lon, :lat)), 4326),
                     ST_GeomFromText(:poly_wkt, 4326),
-                    :confidence
+                    :confidence,
+                    :last_reid_embedding
                 )
                 """
             )
@@ -514,14 +553,15 @@ class TrackAssociator:
                     id, track_code, object_class, current_status,
                     first_detected_at, last_detected_at, last_sensor_id,
                     last_known_point, estimated_heading_deg, estimated_velocity_ms,
-                    history_linestring, confidence_score
+                    history_linestring, confidence_score, last_reid_embedding
                 ) VALUES (
                     :id, :track_code, :object_class, 'ACTIVE',
                     :first_detected_at, :last_detected_at, :sensor_id,
                     ST_SetSRID(ST_MakePoint(:lon, :lat), 4326),
                     NULL, NULL,
                     ST_SetSRID(ST_MakeLine(ST_MakePoint(:lon, :lat), ST_MakePoint(:lon, :lat)), 4326),
-                    :confidence
+                    :confidence,
+                    :last_reid_embedding
                 )
                 """
             )
@@ -538,6 +578,7 @@ class TrackAssociator:
             last_known_point=(detection.detection_lon, detection.detection_lat),
             confidence_score=detection.confidence,
             reachability_geojson=geojson,
+            last_reid_embedding=detection.reid_embedding,
         )
 
     async def _reachability_for_point(
@@ -579,6 +620,12 @@ class TrackAssociator:
             confidence=confidence,
             heading_deg=heading_deg,
         )
+
+
+def _pg_array_to_embedding(value: Any) -> Optional[List[float]]:
+    if value is None:
+        return None
+    return [float(x) for x in value]
 
 
 def _geojson_to_wkt(geojson: Dict[str, Any]) -> Optional[str]:

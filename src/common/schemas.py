@@ -37,6 +37,7 @@ class DetectionItem(BaseModel):
     object_class: EntityClass
     confidence: float = Field(..., ge=0.0, le=1.0)
     bounding_box: BoundingBox
+    reid_embedding: Optional[List[float]] = None
 
 class DetectionEventProcessed(BaseModel):
     event_id: UUID
@@ -61,6 +62,7 @@ class TrackState(BaseModel):
     estimated_velocity_ms: Optional[float] = None
     confidence_score: float = 1.0
     reachability_geojson: Optional[Dict[str, Any]] = None
+    last_reid_embedding: Optional[List[float]] = None
 
 class TacticalDirective(BaseModel):
     directive_id: UUID

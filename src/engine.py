@@ -184,6 +184,7 @@ class RianEngine:
                 object_class=det.object_class,
                 sensor_id=event.sensor_id,
                 confidence=det.confidence,
+                reid_embedding=det.reid_embedding,
             )
 
             try:
