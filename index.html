@@ -24,9 +24,208 @@
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
     ::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.3); border-radius: 4px; }
+    .modal-overlay { background: rgba(3, 7, 18, 0.82); backdrop-filter: blur(8px); }
+    .admin-glass { background: rgba(8, 12, 28, 0.92); backdrop-filter: blur(18px); border: 1px solid rgba(56, 189, 248, 0.28); }
+    .admin-tab-btn.active { background: rgba(8, 145, 178, 0.35); color: #67e8f9; border-color: rgba(34, 211, 238, 0.45); }
+    #login-modal.open, #admin-modal.open { display: flex; }
+    #login-modal, #admin-modal { display: none; }
+    .compass-arrow { display: inline-block; transition: transform 0.12s ease-out; transform-origin: center center; }
+    .map-pick-cursor { cursor: crosshair !important; }
   </style>
 </head>
 <body class="flex flex-col h-screen select-none">
+
+  <!-- TACTICAL SIGN-IN OVERLAY -->
+  <div id="login-modal" class="open fixed inset-0 z-[100] modal-overlay items-center justify-center p-4">
+    <div class="w-full max-w-md admin-glass rounded-2xl shadow-2xl p-6 border border-cyan-800/50">
+      <div class="text-center mb-6">
+        <span class="mono font-bold text-xl tracking-wider text-cyan-400">[ RIAN ]</span>
+        <p class="text-xs text-slate-400 mt-2 mono">TACTICAL OPERATOR AUTHENTICATION</p>
+      </div>
+      <form id="login-form" class="space-y-4" onsubmit="submitLogin(event)">
+        <div>
+          <label class="text-[10px] mono text-slate-400 uppercase">Email</label>
+          <input id="login-email" type="email" required autocomplete="username"
+                 class="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:border-cyan-500 outline-none mono" />
+        </div>
+        <div>
+          <label class="text-[10px] mono text-slate-400 uppercase">Password</label>
+          <input id="login-password" type="password" required autocomplete="current-password"
+                 class="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:border-cyan-500 outline-none mono" />
+        </div>
+        <p id="login-error" class="hidden text-xs mono text-red-400"></p>
+        <button type="submit" id="login-submit-btn"
+                class="w-full py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-sm mono transition-colors">
+          Authenticate
+        </button>
+      </form>
+      <div class="flex flex-col gap-2 mt-4">
+        <button type="button" onclick="quickFillLogin()"
+                class="w-full py-1.5 text-[11px] mono text-cyan-400 border border-cyan-900/60 rounded-lg hover:bg-cyan-950/50">
+          Quick-fill: admin@rian.internal
+        </button>
+        <button type="button" onclick="continueAsGuest()"
+                class="w-full py-1.5 text-[11px] mono text-slate-400 hover:text-slate-200">
+          Continue as Guest / Local Dev
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ADMIN & FLEET MODAL -->
+  <div id="admin-modal" class="fixed inset-0 z-[90] modal-overlay items-center justify-center p-3 md:p-6">
+    <div class="admin-glass rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-cyan-900/50">
+        <span class="mono text-sm font-bold text-cyan-300 tracking-wider">🛡 ADMIN &amp; FLEET COMMAND</span>
+        <button type="button" onclick="closeAdminModal()" class="text-slate-400 hover:text-white text-lg px-2">✕</button>
+      </div>
+      <div class="flex border-b border-slate-800 text-[11px] mono">
+        <button type="button" data-admin-tab="cameras" onclick="switchAdminTab('cameras')"
+                class="admin-tab-btn active flex-1 py-2.5 border-b-2 border-transparent text-slate-400 hover:text-cyan-200">Camera Provisioning</button>
+        <button type="button" data-admin-tab="users" onclick="switchAdminTab('users')"
+                class="admin-tab-btn flex-1 py-2.5 border-b-2 border-transparent text-slate-400 hover:text-cyan-200">User Accounts (RBAC)</button>
+        <button type="button" data-admin-tab="sla" onclick="switchAdminTab('sla')"
+                class="admin-tab-btn flex-1 py-2.5 border-b-2 border-transparent text-slate-400 hover:text-cyan-200">SLA &amp; Benchmarking</button>
+      </div>
+      <div class="flex-1 overflow-y-auto p-4">
+        <!-- Tab: Cameras -->
+        <div id="admin-tab-cameras" class="admin-tab-panel space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="mono text-xs font-bold text-slate-300">REGISTERED CAMERA FLEET</h3>
+            <button type="button" onclick="loadAdminCameras()" class="text-[10px] mono px-2 py-1 rounded border border-cyan-800 text-cyan-400 hover:bg-cyan-950">↻ Refresh</button>
+          </div>
+          <div id="admin-cameras-error" class="hidden text-xs mono text-red-400"></div>
+          <div class="overflow-x-auto rounded-lg border border-slate-800">
+            <table class="w-full text-[11px] mono text-left">
+              <thead class="bg-slate-950/80 text-slate-400">
+                <tr>
+                  <th class="px-2 py-2">Node</th>
+                  <th class="px-2 py-2">Sender</th>
+                  <th class="px-2 py-2">Az°</th>
+                  <th class="px-2 py-2">Battery</th>
+                  <th class="px-2 py-2">Status</th>
+                  <th class="px-2 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="admin-cameras-tbody" class="divide-y divide-slate-800 text-slate-300">
+                <tr><td colspan="6" class="px-2 py-4 text-center text-slate-500">Loading fleet...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="rounded-xl border border-cyan-900/40 bg-slate-950/50 p-4">
+            <h3 class="mono text-xs font-bold text-cyan-400 mb-3">ADD NEW CAMERA NODE</h3>
+            <form id="camera-provision-form" class="grid grid-cols-1 md:grid-cols-2 gap-3" onsubmit="submitNewCamera(event)">
+              <div>
+                <label class="text-[10px] text-slate-400">Node Name</label>
+                <input id="cam-node-name" required placeholder="cam-ridge-west"
+                       class="mt-0.5 w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs mono" />
+              </div>
+              <div>
+                <label class="text-[10px] text-slate-400">Sender Email</label>
+                <input id="cam-sender-email" type="email" required placeholder="cam-ridge-west@ranch.domain"
+                       class="mt-0.5 w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs mono" />
+              </div>
+              <div>
+                <label class="text-[10px] text-slate-400">Longitude</label>
+                <input id="cam-lon" type="number" step="any" required value="-119.82"
+                       class="mt-0.5 w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs mono" />
+              </div>
+              <div>
+                <label class="text-[10px] text-slate-400">Latitude</label>
+                <input id="cam-lat" type="number" step="any" required value="36.745"
+                       class="mt-0.5 w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs mono" />
+              </div>
+              <div class="md:col-span-2 flex flex-wrap items-center gap-3">
+                <button type="button" id="btn-map-pick" onclick="toggleMapPickMode()"
+                        class="px-3 py-1.5 text-[10px] mono font-bold rounded border border-amber-700/50 bg-amber-950/60 text-amber-300 hover:bg-amber-900/60">
+                  Click Map to Pick Pin
+                </button>
+                <div class="flex items-center gap-2 flex-1 min-w-[200px]">
+                  <span class="text-[10px] text-slate-400">Azimuth</span>
+                  <input id="cam-azimuth" type="range" min="0" max="360" value="0" class="flex-1"
+                         oninput="updateAzimuthUI(this.value)" />
+                  <span id="cam-azimuth-deg" class="mono text-cyan-300 text-xs w-10">0°</span>
+                  <span id="cam-compass" class="text-lg" title="Compass"><span class="compass-arrow" id="compass-arrow">↑</span></span>
+                </div>
+              </div>
+              <p id="camera-form-error" class="hidden md:col-span-2 text-xs mono text-red-400"></p>
+              <div class="md:col-span-2">
+                <button type="submit" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs mono font-bold rounded-lg">
+                  Provision Camera Node
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+        <!-- Tab: Users -->
+        <div id="admin-tab-users" class="admin-tab-panel hidden space-y-4">
+          <p id="admin-users-auth-hint" class="hidden text-xs mono text-amber-400">Admin role required — sign in with an ADMIN account.</p>
+          <div id="admin-users-error" class="hidden text-xs mono text-red-400"></div>
+          <div class="overflow-x-auto rounded-lg border border-slate-800">
+            <table class="w-full text-[11px] mono text-left">
+              <thead class="bg-slate-950/80 text-slate-400">
+                <tr><th class="px-2 py-2">Email</th><th class="px-2 py-2">Name</th><th class="px-2 py-2">Role</th><th class="px-2 py-2">Active</th></tr>
+              </thead>
+              <tbody id="admin-users-tbody" class="divide-y divide-slate-800 text-slate-300">
+                <tr><td colspan="4" class="px-2 py-4 text-center text-slate-500">—</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="rounded-xl border border-cyan-900/40 bg-slate-950/50 p-4">
+            <h3 class="mono text-xs font-bold text-cyan-400 mb-3">CREATE USER</h3>
+            <form id="user-create-form" class="grid grid-cols-1 md:grid-cols-2 gap-3" onsubmit="submitNewUser(event)">
+              <input id="user-email" type="email" required placeholder="Email" class="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs mono" />
+              <input id="user-password" type="password" required placeholder="Password" class="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs mono" />
+              <input id="user-full-name" placeholder="Full Name" class="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs mono" />
+              <select id="user-role" class="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs mono">
+                <option value="ADMIN">ADMIN</option>
+                <option value="OPERATOR">OPERATOR</option>
+                <option value="RESPONDER">RESPONDER</option>
+              </select>
+              <p id="user-form-error" class="hidden md:col-span-2 text-xs mono text-red-400"></p>
+              <div class="md:col-span-2">
+                <button type="submit" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs mono font-bold rounded-lg">Create User</button>
+              </div>
+            </form>
+          </div>
+        </div>
+        <!-- Tab: SLA -->
+        <div id="admin-tab-sla" class="admin-tab-panel hidden space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 class="mono text-xs font-bold text-slate-300">REAL-TIME SLA DASHBOARD</h3>
+              <p id="sla-timestamp" class="text-[10px] mono text-slate-500 mt-0.5">—</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span id="sla-overall-badge" class="mono text-[10px] px-2 py-0.5 rounded border">—</span>
+              <button type="button" id="btn-run-benchmark" onclick="runSlaBenchmark()"
+                      class="px-3 py-1.5 text-[10px] mono font-bold rounded bg-violet-950 text-violet-300 border border-violet-700/50 hover:bg-violet-900/60">
+                Run 25-Iteration Benchmark
+              </button>
+            </div>
+          </div>
+          <div id="sla-benchmark-status" class="hidden text-xs mono text-cyan-400 flex items-center gap-2">
+            <span class="inline-block w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span>
+            Running benchmark iterations...
+          </div>
+          <div>
+            <h4 class="mono text-[10px] text-cyan-500 mb-2 uppercase">Tier 1 — Hot-Path Latency</h4>
+            <div id="sla-tier1-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2"></div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+              <h4 class="mono text-[10px] text-emerald-500 mb-2 uppercase">Tier 2 — Sensor Fleet Availability</h4>
+              <div id="sla-tier2" class="text-xs mono text-slate-300">—</div>
+            </div>
+            <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+              <h4 class="mono text-[10px] text-amber-500 mb-2 uppercase">Tier 3 — Alert Delivery SLA</h4>
+              <div id="sla-tier3" class="text-xs mono text-slate-300">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- TOP HUD BAR -->
   <header class="h-14 bg-slate-950/95 border-b border-cyan-900/40 px-4 flex items-center justify-between z-50">
@@ -67,6 +266,9 @@
         <button id="btn-dark" onclick="switchBasemap('dark')" class="px-2 py-0.5 rounded text-slate-400 hover:text-slate-200">⬛ Tactical</button>
       </div>
 
+      <span id="user-badge" class="hidden px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-700 text-[10px] mono">[ GUEST ]</span>
+      <button type="button" onclick="openAdminModal()" class="px-2 py-1 rounded bg-cyan-950 hover:bg-cyan-900 text-[10px] mono text-cyan-300 border border-cyan-700/50 font-bold">[ 🛡 Admin &amp; Fleet ]</button>
+      <button type="button" id="btn-logout" onclick="logout()" class="hidden px-2 py-1 rounded bg-slate-900 hover:bg-red-950 text-[10px] mono text-slate-400 hover:text-red-300 border border-slate-700">Logout</button>
       <div class="text-right pl-3 border-l border-slate-800 hidden md:block">
         <div id="clock-utc" class="text-xs font-bold text-cyan-300">00:00:00 UTC</div>
         <div id="clock-local" class="text-[10px] text-slate-400">00:00:00 LOCAL</div>
@@ -207,6 +409,435 @@
       ? (localStorage.getItem('RIAN_BACKEND_URL') || 'http://localhost:8000')
       : '';
 
+    const AUTH_TOKEN_KEY = 'rian_access_token';
+    const AUTH_USER_KEY = 'rian_user';
+    const AUTH_GUEST_KEY = 'rian_guest_mode';
+    let mapPickMode = false;
+    let authSession = { authenticated: false, guest: false, user: null };
+
+    const SLA_COMPONENT_LABELS = {
+      ingestion_decode: 'Ingestion Decode',
+      yolo_reid_inference: 'YOLO Re-ID Inference',
+      isochrone_wavefront: 'Isochrone Wavefront',
+      intercept_routing: 'Intercept Routing',
+      hotpath_end_to_end: 'Hot-Path E2E'
+    };
+
+    function getAccessToken() {
+      return localStorage.getItem(AUTH_TOKEN_KEY);
+    }
+
+    function getStoredUser() {
+      try {
+        const raw = localStorage.getItem(AUTH_USER_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function authHeaders(json = true) {
+      const headers = {};
+      if (json) headers['Content-Type'] = 'application/json';
+      const token = getAccessToken();
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      return headers;
+    }
+
+    function slaStatusClass(status) {
+      if (status === 'HEALTHY') return 'bg-emerald-950 text-emerald-300 border-emerald-700/50';
+      if (status === 'DEGRADED') return 'bg-amber-950 text-amber-300 border-amber-700/50';
+      return 'bg-red-950 text-red-300 border-red-700/50';
+    }
+
+    function refreshAuthUI() {
+      const badge = document.getElementById('user-badge');
+      const logoutBtn = document.getElementById('btn-logout');
+      const user = getStoredUser();
+      const token = getAccessToken();
+      authSession.authenticated = !!(token && user);
+      authSession.user = user;
+      authSession.guest = localStorage.getItem(AUTH_GUEST_KEY) === '1' && !authSession.authenticated;
+
+      if (authSession.authenticated && user) {
+        const role = (user.role || 'OPERATOR').toUpperCase();
+        badge.textContent = '[ ' + role + ' ] ' + user.email;
+        badge.className = 'px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 text-[10px] mono';
+        badge.classList.remove('hidden');
+        logoutBtn.classList.remove('hidden');
+      } else if (authSession.guest) {
+        badge.textContent = '[ GUEST / LOCAL DEV ]';
+        badge.className = 'px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-700 text-[10px] mono';
+        badge.classList.remove('hidden');
+        logoutBtn.classList.add('hidden');
+      } else {
+        badge.classList.add('hidden');
+        logoutBtn.classList.add('hidden');
+      }
+    }
+
+    function showLoginModal() {
+      const el = document.getElementById('login-modal');
+      el.classList.add('open');
+    }
+
+    function hideLoginModal() {
+      const el = document.getElementById('login-modal');
+      el.classList.remove('open');
+    }
+
+    function quickFillLogin() {
+      document.getElementById('login-email').value = 'admin@rian.internal';
+      document.getElementById('login-password').value = 'rian_admin_secret';
+    }
+
+    function continueAsGuest() {
+      localStorage.setItem(AUTH_GUEST_KEY, '1');
+      authSession.guest = true;
+      refreshAuthUI();
+      hideLoginModal();
+    }
+
+    async function submitLogin(ev) {
+      ev.preventDefault();
+      const errEl = document.getElementById('login-error');
+      errEl.classList.add('hidden');
+      const btn = document.getElementById('login-submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Authenticating...';
+      try {
+        const res = await fetch(API_BASE + '/api/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('login-email').value.trim(),
+            password: document.getElementById('login-password').value
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          errEl.textContent = data.detail || 'Authentication failed';
+          errEl.classList.remove('hidden');
+          return;
+        }
+        localStorage.setItem(AUTH_TOKEN_KEY, data.access_token);
+        localStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
+        localStorage.removeItem(AUTH_GUEST_KEY);
+        refreshAuthUI();
+        hideLoginModal();
+      } catch (e) {
+        errEl.textContent = 'Unable to reach auth service.';
+        errEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Authenticate';
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      localStorage.removeItem(AUTH_USER_KEY);
+      localStorage.removeItem(AUTH_GUEST_KEY);
+      refreshAuthUI();
+      showLoginModal();
+    }
+
+    function openAdminModal() {
+      document.getElementById('admin-modal').classList.add('open');
+      switchAdminTab('cameras');
+    }
+
+    function closeAdminModal() {
+      document.getElementById('admin-modal').classList.remove('open');
+      if (mapPickMode) toggleMapPickMode(false);
+    }
+
+    function switchAdminTab(tab) {
+      document.querySelectorAll('.admin-tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-admin-tab') === tab);
+      });
+      document.querySelectorAll('.admin-tab-panel').forEach(panel => panel.classList.add('hidden'));
+      const panel = document.getElementById('admin-tab-' + tab);
+      if (panel) panel.classList.remove('hidden');
+      if (tab === 'cameras') loadAdminCameras();
+      if (tab === 'users') loadAdminUsers();
+      if (tab === 'sla') loadSlaSummary();
+    }
+
+    function updateAzimuthUI(deg) {
+      const d = Number(deg);
+      document.getElementById('cam-azimuth-deg').textContent = Math.round(d) + '°';
+      const arrow = document.getElementById('compass-arrow');
+      if (arrow) arrow.style.transform = 'rotate(' + d + 'deg)';
+    }
+
+    function toggleMapPickMode(forceOff) {
+      const btn = document.getElementById('btn-map-pick');
+      if (forceOff === false || (mapPickMode && forceOff !== true)) {
+        mapPickMode = false;
+        map.getContainer().classList.remove('map-pick-cursor');
+        if (btn) {
+          btn.textContent = 'Click Map to Pick Pin';
+          btn.classList.remove('ring-2', 'ring-amber-400');
+        }
+        return;
+      }
+      mapPickMode = !mapPickMode;
+      if (mapPickMode) {
+        map.getContainer().classList.add('map-pick-cursor');
+        btn.textContent = 'Picking on map… (click to place)';
+        btn.classList.add('ring-2', 'ring-amber-400');
+        closeAdminModal();
+      } else {
+        toggleMapPickMode(false);
+      }
+    }
+
+    async function loadAdminCameras() {
+      const tbody = document.getElementById('admin-cameras-tbody');
+      const errEl = document.getElementById('admin-cameras-error');
+      errEl.classList.add('hidden');
+      try {
+        const res = await fetch(API_BASE + '/api/v1/cameras');
+        const cameras = await res.json();
+        if (!res.ok) throw new Error(cameras.detail || 'Failed to load cameras');
+        if (!Array.isArray(cameras) || !cameras.length) {
+          tbody.innerHTML = '<tr><td colspan="6" class="px-2 py-4 text-center text-slate-500">No cameras registered</td></tr>';
+          return;
+        }
+        tbody.innerHTML = cameras.map(c => {
+          const batt = c.battery_level != null ? c.battery_level + '%' : '—';
+          const st = (c.status || 'unknown').toUpperCase();
+          const stCls = c.status === 'active' ? 'text-emerald-400' : 'text-red-400';
+          return `<tr>
+            <td class="px-2 py-2 font-bold">${escapeHtml(c.node_name)}</td>
+            <td class="px-2 py-2 text-slate-400">${escapeHtml(c.sender_email)}</td>
+            <td class="px-2 py-2">${c.azimuth_deg}°</td>
+            <td class="px-2 py-2">${batt}</td>
+            <td class="px-2 py-2 ${stCls}">${st}</td>
+            <td class="px-2 py-2 space-x-1">
+              <button type="button" onclick="cameraTestProbe('${c.id}')" class="px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800 text-[10px]">Test Probe</button>
+              <button type="button" onclick="cameraDecommission('${c.id}')" class="px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-800 text-[10px]">Decommission</button>
+            </td>
+          </tr>`;
+        }).join('');
+      } catch (e) {
+        errEl.textContent = String(e.message || e);
+        errEl.classList.remove('hidden');
+        tbody.innerHTML = '<tr><td colspan="6" class="px-2 py-4 text-center text-slate-500">Error loading fleet</td></tr>';
+      }
+    }
+
+    async function submitNewCamera(ev) {
+      ev.preventDefault();
+      const errEl = document.getElementById('camera-form-error');
+      errEl.classList.add('hidden');
+      const body = {
+        node_name: document.getElementById('cam-node-name').value.trim(),
+        sender_email: document.getElementById('cam-sender-email').value.trim(),
+        lon: parseFloat(document.getElementById('cam-lon').value),
+        lat: parseFloat(document.getElementById('cam-lat').value),
+        azimuth_deg: parseFloat(document.getElementById('cam-azimuth').value)
+      };
+      try {
+        const res = await fetch(API_BASE + '/api/v1/cameras', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          errEl.textContent = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || 'Provision failed');
+          errEl.classList.remove('hidden');
+          return;
+        }
+        document.getElementById('camera-provision-form').reset();
+        document.getElementById('cam-lon').value = '-119.82';
+        document.getElementById('cam-lat').value = '36.745';
+        updateAzimuthUI(0);
+        await loadAdminCameras();
+        await loadState();
+      } catch (e) {
+        errEl.textContent = 'Network error provisioning camera.';
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    async function cameraTestProbe(id) {
+      try {
+        await fetch(API_BASE + '/api/v1/cameras/' + id + '/test-probe', { method: 'POST', headers: authHeaders(false) });
+        await loadState();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function cameraDecommission(id) {
+      if (!confirm('Decommission this camera node?')) return;
+      try {
+        await fetch(API_BASE + '/api/v1/cameras/' + id, { method: 'DELETE', headers: authHeaders(false) });
+        await loadAdminCameras();
+        await loadState();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function loadAdminUsers() {
+      const tbody = document.getElementById('admin-users-tbody');
+      const errEl = document.getElementById('admin-users-error');
+      const hint = document.getElementById('admin-users-auth-hint');
+      errEl.classList.add('hidden');
+      hint.classList.add('hidden');
+      if (!getAccessToken()) {
+        hint.classList.remove('hidden');
+        tbody.innerHTML = '<tr><td colspan="4" class="px-2 py-4 text-center text-slate-500">Sign in required</td></tr>';
+        return;
+      }
+      try {
+        const res = await fetch(API_BASE + '/api/v1/admin/users', { headers: authHeaders(false) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          hint.classList.remove('hidden');
+          throw new Error(data.detail || 'Failed to load users');
+        }
+        if (!data.length) {
+          tbody.innerHTML = '<tr><td colspan="4" class="px-2 py-4 text-center text-slate-500">No users</td></tr>';
+          return;
+        }
+        tbody.innerHTML = data.map(u => `<tr>
+          <td class="px-2 py-2">${escapeHtml(u.email)}</td>
+          <td class="px-2 py-2">${escapeHtml(u.full_name || '—')}</td>
+          <td class="px-2 py-2 text-cyan-300">${escapeHtml(u.role)}</td>
+          <td class="px-2 py-2">${u.is_active ? 'YES' : 'NO'}</td>
+        </tr>`).join('');
+      } catch (e) {
+        errEl.textContent = String(e.message || e);
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    async function submitNewUser(ev) {
+      ev.preventDefault();
+      const errEl = document.getElementById('user-form-error');
+      errEl.classList.add('hidden');
+      if (!getAccessToken()) {
+        errEl.textContent = 'Admin sign-in required.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      const body = {
+        email: document.getElementById('user-email').value.trim(),
+        password: document.getElementById('user-password').value,
+        full_name: document.getElementById('user-full-name').value.trim() || null,
+        role: document.getElementById('user-role').value
+      };
+      try {
+        const res = await fetch(API_BASE + '/api/v1/admin/users', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          errEl.textContent = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || 'Create failed');
+          errEl.classList.remove('hidden');
+          return;
+        }
+        document.getElementById('user-create-form').reset();
+        await loadAdminUsers();
+      } catch (e) {
+        errEl.textContent = 'Network error creating user.';
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    function renderSlaSummary(summary) {
+      if (!summary) return;
+      document.getElementById('sla-timestamp').textContent = 'Updated: ' + (summary.timestamp_utc || '—');
+      const overall = document.getElementById('sla-overall-badge');
+      const oh = summary.overall_health || '—';
+      overall.textContent = oh;
+      const ohCls = oh === 'OPTIMAL' ? 'bg-emerald-950 text-emerald-300 border-emerald-700/50'
+        : oh === 'WARNING' ? 'bg-amber-950 text-amber-300 border-amber-700/50'
+        : 'bg-red-950 text-red-300 border-red-700/50';
+      overall.className = 'mono text-[10px] px-2 py-0.5 rounded border ' + ohCls;
+
+      const tier1 = summary.tier1_hotpath_sla || {};
+      const grid = document.getElementById('sla-tier1-grid');
+      grid.innerHTML = Object.keys(tier1).map(key => {
+        const m = tier1[key];
+        const label = SLA_COMPONENT_LABELS[key] || key;
+        const badge = slaStatusClass(m.status);
+        return `<div class="rounded-lg border border-slate-800 bg-slate-950/70 p-2.5">
+          <div class="flex items-center justify-between gap-2 mb-1">
+            <span class="mono text-[10px] text-slate-200 font-bold">${escapeHtml(label)}</span>
+            <span class="mono text-[9px] px-1.5 py-0.5 rounded border ${badge}">${m.status}</span>
+          </div>
+          <div class="text-[10px] mono text-slate-400">Budget &lt; ${m.target_budget_ms}ms · n=${m.samples_count}</div>
+          <div class="grid grid-cols-3 gap-1 mt-1.5 text-[10px] mono">
+            <div><span class="text-slate-500">p50</span><br><span class="text-cyan-300">${m.p50_ms.toFixed(2)}</span></div>
+            <div><span class="text-slate-500">p95</span><br><span class="text-cyan-300">${m.p95_ms.toFixed(2)}</span></div>
+            <div><span class="text-slate-500">p99</span><br><span class="text-cyan-300">${m.p99_ms.toFixed(2)}</span></div>
+          </div>
+        </div>`;
+      }).join('');
+
+      const uptime = summary.tier2_fleet_uptime_pct;
+      const lowBat = summary.tier2_low_battery_nodes || [];
+      const t2Ok = uptime >= 99;
+      document.getElementById('sla-tier2').innerHTML = `
+        <div>Uptime: <span class="${t2Ok ? 'text-emerald-400' : 'text-red-400'} font-bold">${uptime.toFixed(2)}%</span> <span class="text-slate-500">(target ≥99%)</span></div>
+        <div class="mt-2 text-slate-400">Low battery warnings: ${lowBat.length ? lowBat.map(n => '<span class="text-amber-400">' + escapeHtml(n) + '</span>').join(', ') : '<span class="text-emerald-400">None</span>'}</div>`;
+
+      const alertP95 = summary.tier3_alert_delivery_p95_s;
+      const t3Ok = alertP95 < 5.0;
+      document.getElementById('sla-tier3').innerHTML = `
+        <div>Trigger → Alert p95: <span class="${t3Ok ? 'text-emerald-400' : 'text-red-400'} font-bold">${alertP95.toFixed(3)}s</span></div>
+        <div class="text-slate-500 mt-1">Target &lt; 5.0s</div>`;
+    }
+
+    async function loadSlaSummary() {
+      try {
+        const res = await fetch(API_BASE + '/api/v1/sla/summary');
+        const data = await res.json();
+        if (res.ok) renderSlaSummary(data);
+      } catch (e) {
+        console.error('SLA load failed', e);
+      }
+    }
+
+    async function runSlaBenchmark() {
+      const statusEl = document.getElementById('sla-benchmark-status');
+      const btn = document.getElementById('btn-run-benchmark');
+      statusEl.classList.remove('hidden');
+      btn.disabled = true;
+      try {
+        const res = await fetch(API_BASE + '/api/v1/sla/run-benchmark?runs=25', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) renderSlaSummary(data);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        statusEl.classList.add('hidden');
+        btn.disabled = false;
+      }
+    }
+
+    function initAuthGate() {
+      refreshAuthUI();
+      const token = getAccessToken();
+      const guest = localStorage.getItem(AUTH_GUEST_KEY) === '1';
+      if (token && getStoredUser()) {
+        hideLoginModal();
+      } else if (guest) {
+        hideLoginModal();
+      } else {
+        showLoginModal();
+      }
+      updateAzimuthUI(document.getElementById('cam-azimuth').value);
+    }
+
     function promptApiUrl() {
       const current = localStorage.getItem('RIAN_BACKEND_URL') || (window.location.origin.includes('vercel.app') ? 'http://localhost:8000' : window.location.origin);
       const next = prompt('Enter Rian Engine Backend URL (e.g. http://localhost:8000 or https://your-domain.com):', current);
@@ -214,6 +845,21 @@
         localStorage.setItem('RIAN_BACKEND_URL', next.replace(/\/$/, ''));
         window.location.reload();
       }
+    }
+
+    function escapeHtml(text) {
+      return String(text ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function formatCopilotText(text) {
+      const safe = escapeHtml(text);
+      return safe
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>');
     }
 
     // Map initialization
@@ -266,10 +912,18 @@
       document.getElementById('clock-local').textContent = now.toTimeString().slice(0, 8) + ' LOCAL';
     }, 1000);
 
-    // Map click sets responder unit location
+    // Map click: pin pick for camera provision OR relocate response unit
     map.on('click', async (e) => {
       const lon = e.latlng.lng;
       const lat = e.latlng.lat;
+      if (mapPickMode) {
+        document.getElementById('cam-lon').value = lon.toFixed(6);
+        document.getElementById('cam-lat').value = lat.toFixed(6);
+        toggleMapPickMode(false);
+        openAdminModal();
+        switchAdminTab('cameras');
+        return;
+      }
       await fetch(`${API_BASE}/api/v1/interceptor/telemetry`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -473,22 +1127,30 @@
       try {
         const res = await fetch(`${API_BASE}/api/v1/cop/ai-sitrep`, { method: 'POST' });
         const report = await res.json();
-        document.getElementById('sitrep-badge').textContent = report.threat_level || 'DEFCON 5 // SECURE';
-        if ((report.threat_level || '').includes('RED') || (report.threat_level || '').includes('2')) {
-          document.getElementById('sitrep-badge').className = 'mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-700/50 animate-pulse';
+        const threat = report.threat_status || report.threat_level || 'SECURE';
+        const defcon = report.defcon_level != null ? report.defcon_level : 5;
+        const badgeEl = document.getElementById('sitrep-badge');
+        badgeEl.textContent = `DEFCON ${defcon} // ${threat}`;
+        const threatUpper = String(threat).toUpperCase();
+        if (threatUpper.includes('RED') || defcon <= 2) {
+          badgeEl.className = 'mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-700/50 animate-pulse';
+        } else if (threatUpper.includes('AMBER') || defcon === 3) {
+          badgeEl.className = 'mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-700/50';
         } else {
-          document.getElementById('sitrep-badge').className = 'mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/50';
+          badgeEl.className = 'mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/50';
         }
-        document.getElementById('sitrep-time').textContent = report.timestamp || '';
+        document.getElementById('sitrep-time').textContent = report.timestamp_utc || report.timestamp || '';
         document.getElementById('sitrep-headline').textContent = report.headline || '';
-        document.getElementById('sitrep-summary').textContent = report.summary || '';
-        if (report.action_items && report.action_items.length) {
-          document.getElementById('sitrep-actions').innerHTML = report.action_items.map(a => `<div>• ${a}</div>`).join('');
+        document.getElementById('sitrep-summary').textContent = report.target_summary || report.summary || '';
+        const actions = report.recommended_actions || report.action_items || [];
+        if (actions.length) {
+          document.getElementById('sitrep-actions').innerHTML = actions.map(a => `<div>• ${escapeHtml(a)}</div>`).join('');
         } else {
           document.getElementById('sitrep-actions').innerHTML = '';
         }
-        if (report.provider) {
-          document.getElementById('sitrep-provider').textContent = 'Engine: ' + report.provider;
+        const provider = report.engine_provider || report.provider;
+        if (provider) {
+          document.getElementById('sitrep-provider').textContent = 'Engine: ' + provider;
         }
       } catch (e) {
         console.error('Error fetching SITREP:', e);
@@ -509,7 +1171,10 @@
           body: JSON.stringify({ query: val })
         });
         const data = await res.json();
-        out.innerHTML = `<b>&gt; ${data.query}</b><br><span class="text-slate-200 mt-1 block">${data.response}</span>`;
+        const responseText = typeof data.response === 'string'
+          ? data.response
+          : JSON.stringify(data.response, null, 2);
+        out.innerHTML = `<b>&gt; ${escapeHtml(data.query)}</b><br><span class="text-slate-200 mt-1 block whitespace-pre-wrap break-words leading-relaxed">${formatCopilotText(responseText)}</span>`;
       } catch (e) {
         out.textContent = 'Error connecting to Tactical Copilot.';
       }
@@ -571,6 +1236,7 @@
     }
 
     // Initial load and SSE stream
+    initAuthGate();
     loadState().then(() => fetchAiSitrep());
     const es = new EventSource(`${API_BASE}/api/v1/cop/stream`);
     es.addEventListener('cop_state', e => {

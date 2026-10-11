@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     LLM_MODEL: str = "deepseek-chat"
 
+    # JWT authentication (spec 10)
+    JWT_SECRET_KEY: str = "rian-dev-jwt-secret-change-in-production"
+    JWT_ACCESS_TOKEN_EXPIRE_HOURS: int = 24
+    FIRST_SUPERUSER: str = "admin@rian.internal"
+    FIRST_SUPERUSER_PASSWORD: str = "rian_admin_secret"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property

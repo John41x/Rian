@@ -39,6 +39,9 @@ This repository is organized to allow multiple specialized subagents to work in 
 | **07** | Cross-Camera Appearance Re-ID | `specs/07-cross-camera-reid.md` | Spec 00, 01, 03 | `VERIFIED` | Ingestion & CV Agent |
 | **08** | PostGIS HMM Road Snapping | `specs/08-postgis-hmm-mapmatching.md` | Spec 00, 02, 03 | `VERIFIED` | Geospatial DB Agent |
 | **09** | Tactical LLM & Verified SITREP | `specs/09-tactical-llm-sitrep.md` | Spec 00, 04 | `VERIFIED` | Intelligence & LLM Agent |
+| **10** | Authentication & Access Control | `specs/10-authentication-rbac.md` | Spec 00 | `VERIFIED` | Core Backend Agent |
+| **11** | Camera Provisioning & Fleet Admin | `specs/11-admin-camera-provisioning.md` | Spec 00, 10 | `VERIFIED` | Web & Operations Agent |
+| **12** | Benchmarking & SLA Monitoring | `specs/12-benchmarking-sla-dashboard.md` | Spec 00, 10, 11 | `VERIFIED` | QA & Metrics Agent |
 
 ### Status Definitions
 - `DRAFT`: Under specification; not ready for agent implementation.

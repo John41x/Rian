@@ -74,16 +74,16 @@ def collect_verified_entity_names(cop_state: Dict[str, Any]) -> Tuple[Set[str], 
 
 
 def build_fenced_evidence(cop_state: Dict[str, Any]) -> Dict[str, Any]:
-    """Snapshot ground-truth telemetry used for evidence fencing."""
+    """High-level verified entity snapshot for evidence fencing (no raw PostGIS dumps)."""
     tracks, chokepoints, sensors = collect_verified_entity_names(cop_state)
+    active_tracks = cop_state.get("tracks") or []
+    directives = cop_state.get("directives") or []
     return {
-        "track_codes": sorted(tracks),
-        "chokepoint_names": sorted(chokepoints),
-        "sensor_names": sorted(sensors),
-        "tracks": cop_state.get("tracks") or [],
-        "chokepoints": cop_state.get("chokepoints") or [],
-        "directives": cop_state.get("directives") or [],
-        "sensors": cop_state.get("sensors") or [],
+        "verified_tracks": sorted(tracks),
+        "verified_chokepoints": sorted(chokepoints),
+        "verified_sensors": sorted(sensors),
+        "active_track_count": len(active_tracks),
+        "directive_count": len(directives),
     }
 
 
@@ -123,11 +123,31 @@ def _hallucinated_chokepoint_phrases(
         "GREEN",
         "AMBER",
     }
+    non_place_words = {
+        "moving",
+        "interior",
+        "acreage",
+        "target",
+        "interception",
+        "feasible",
+        "advantage",
+        "detected",
+        "evaluating",
+        "margins",
+        "perimeter",
+        "secure",
+        "active",
+        "breach",
+        "tactical",
+        "track",
+    }
     valid_lower = {c.lower() for c in valid_chokepoints}
     rejected: List[str] = []
     for match in re.finditer(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b", text):
         phrase = match.group(0)
         if phrase in skip:
+            continue
+        if any(part.lower() in non_place_words for part in phrase.split()):
             continue
         if phrase.lower() in valid_lower:
             continue
@@ -162,12 +182,37 @@ def fence_text_entity_references(
         rejected.append(phrase)
         result = result.replace(phrase, "[REDACTED_UNVERIFIED]")
 
-    track_pattern = re.compile(r"\b[A-Z]{2,}-\d+\b")
-    for match in track_pattern.finditer(text):
-        code = match.group(0)
-        if code not in valid_tracks and code.upper() not in {t.upper() for t in valid_tracks}:
-            rejected.append(code)
-            result = re.sub(rf"\b{re.escape(code)}\b", "[REDACTED_UNVERIFIED]", result)
+    valid_upper = {t.upper() for t in valid_tracks}
+    trk_pattern = re.compile(r"\bTRK-[A-Za-z0-9][A-Za-z0-9_-]*\b")
+    simple_track_pattern = re.compile(r"\b[A-Z]{2,}-\d+\b")
+    protected_spans: List[Tuple[int, int]] = []
+    for code in valid_tracks:
+        if not code:
+            continue
+        for match in re.finditer(rf"\b{re.escape(code)}\b", text):
+            protected_spans.append((match.start(), match.end()))
+
+    def _span_protected(start: int, end: int) -> bool:
+        return any(ps <= start and end <= pe for ps, pe in protected_spans)
+
+    candidates: List[Tuple[int, int, str]] = []
+    for match in trk_pattern.finditer(text):
+        candidates.append((match.start(), match.end(), match.group(0)))
+    for match in simple_track_pattern.finditer(text):
+        if not _span_protected(match.start(), match.end()):
+            candidates.append((match.start(), match.end(), match.group(0)))
+
+    seen_codes: Set[str] = set()
+    for _start, _end, code in sorted(candidates, key=lambda x: (-len(x[2]), x[0])):
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+        if code in valid_tracks or code.upper() in valid_upper:
+            continue
+        if any(code in vt or vt in code for vt in valid_tracks):
+            continue
+        rejected.append(code)
+        result = re.sub(rf"\b{re.escape(code)}\b", "[REDACTED_UNVERIFIED]", result)
 
     return result, rejected
 

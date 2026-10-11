@@ -5,6 +5,8 @@ python-multipart>=0.0.9
 pydantic>=2.7.0
 pydantic-settings>=2.2.0
 python-dotenv>=1.0.1
+pyjwt>=2.8.0
+bcrypt>=4.1.0
 
 # Asynchronous SMTP Server
 aiosmtpd>=1.4.6

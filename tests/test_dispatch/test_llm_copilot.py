@@ -63,7 +63,7 @@ def _valid_report_kwargs() -> dict:
         "tactical_margin_minutes": 5.0,
         "target_summary": "Track TRK-001 inbound",
         "recommended_actions": ["Dispatch unit to South Gate"],
-        "fenced_evidence": {"track_codes": ["TRK-001"]},
+        "fenced_evidence": {"verified_tracks": ["TRK-001"]},
         "engine_provider": "local_tactical_reasoner",
     }
 
@@ -100,7 +100,7 @@ class TestEvidenceGuards:
             "Phantom" in r for r in rejected
         )
         assert "Phantom North Portal" not in guarded["headline"]
-        assert guarded["fenced_evidence"]["chokepoint_names"] == ["South Gate"]
+        assert guarded["fenced_evidence"]["verified_chokepoints"] == ["South Gate"]
 
     def test_verified_names_pass_through(self):
         cop = _sample_cop_state()
@@ -215,35 +215,54 @@ class TestOperatorQueries:
     @pytest.mark.asyncio
     async def test_deepseek_query_executes_tool_calls(self):
         copilot = TacticalCopilot(deepseek_key="sk-test-key")
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
+        turn1_response = MagicMock()
+        turn1_response.raise_for_status = MagicMock()
+        turn1_response.json.return_value = {
             "choices": [
                 {
                     "message": {
                         "content": None,
                         "tool_calls": [
                             {
+                                "id": "call_tracks_1",
                                 "function": {
                                     "name": "get_active_tracks_tool",
                                     "arguments": "{}",
-                                }
+                                },
                             }
                         ],
                     }
                 }
             ]
         }
+        turn2_response = MagicMock()
+        turn2_response.raise_for_status = MagicMock()
+        turn2_response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            "One active track: TRK-001 (person) moving at 9.0 km/h "
+                            "near the South Gate corridor."
+                        ),
+                    }
+                }
+            ]
+        }
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.post = AsyncMock(side_effect=[turn1_response, turn2_response])
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
+        state = _sample_cop_state()
         with patch("src.dispatch.llm_copilot.httpx.AsyncClient", return_value=mock_client):
-            answer = await copilot._call_deepseek_query("List tracks", _sample_cop_state())
+            answer = await copilot._call_deepseek_query("List tracks", state, state)
 
-        assert "get_active_tracks_tool" in answer
+        assert mock_client.post.await_count == 2
+        assert "get_active_tracks_tool" not in answer
         assert "TRK-001" in answer
+        tool_msgs = [m for m in mock_client.post.await_args_list[1].kwargs["json"]["messages"] if m.get("role") == "tool"]
+        assert tool_msgs and tool_msgs[0]["tool_call_id"] == "call_tracks_1"
 
     def test_execute_spatial_tool_unknown(self):
         out = execute_spatial_tool("missing_tool", _sample_cop_state())

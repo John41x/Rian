@@ -214,7 +214,7 @@ class TacticalCopilot:
 
         if self.provider == "deepseek":
             try:
-                return await self._call_deepseek_query(safe_query, safe_state)
+                return await self._call_deepseek_query(safe_query, safe_state, cop_state)
             except Exception as e:
                 logger.warning("DeepSeek query failed, falling back to local reasoner: %s", e)
 
@@ -279,18 +279,24 @@ class TacticalCopilot:
         guarded.setdefault("fenced_evidence", build_fenced_evidence(cop_state))
         return TacticalSitrepReport(**guarded)
 
-    async def _call_deepseek_query(self, query: str, cop_state: Dict[str, Any]) -> str:
+    async def _call_deepseek_query(
+        self,
+        query: str,
+        prompt_state: Dict[str, Any],
+        telemetry_state: Dict[str, Any],
+    ) -> str:
         messages: List[Dict[str, Any]] = [
             {
                 "role": "system",
                 "content": (
                     "You are RIAN TACTICAL COMMAND copilot. Answer using verified COP telemetry only. "
-                    "Use tool calls when the operator asks about tracks, chokepoints, or cameras."
+                    "Use tool calls when the operator asks about tracks, chokepoints, or cameras. "
+                    "Respond in authoritative natural language — no raw JSON dumps or tool names in the final answer."
                 ),
             },
             {
                 "role": "user",
-                "content": f"COP state:\n{json.dumps(cop_state, default=str)}\n\nQuery: {query}",
+                "content": f"COP state:\n{json.dumps(prompt_state, default=str)}\n\nQuery: {query}",
             },
         ]
         data = await self.call_deepseek_chat(
@@ -301,17 +307,28 @@ class TacticalCopilot:
         message = data["choices"][0]["message"]
         tool_calls = message.get("tool_calls") or []
         if tool_calls:
-            parts: List[str] = []
+            messages.append(message)
             for call in tool_calls:
                 fn = call.get("function") or {}
                 name = fn.get("name", "")
-                result = execute_spatial_tool(name, cop_state)
-                parts.append(f"{name}: {json.dumps(result, default=str)}")
-            return " | ".join(parts)
+                tool_call_id = call.get("id") or f"call_{name}"
+                result = execute_spatial_tool(name, telemetry_state)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": json.dumps(result, default=str),
+                    }
+                )
+            follow_up = await self.call_deepseek_chat(messages=messages, temperature=0.3)
+            content = follow_up["choices"][0]["message"].get("content")
+            if content:
+                return str(content).strip()
+            return self._local_heuristic_query(query, telemetry_state)
         content = message.get("content")
         if content:
             return str(content).strip()
-        return self._local_heuristic_query(query, cop_state)
+        return self._local_heuristic_query(query, telemetry_state)
 
     def _local_heuristic_sitrep(self, cop_state: Dict[str, Any]) -> TacticalSitrepReport:
         tracks = cop_state.get("tracks", [])
@@ -458,9 +475,11 @@ class TacticalCopilot:
 
         if any(k in q for k in ("camera", "sensor", "fleet", "health")):
             data = get_camera_health_tool(cop_state)
+            offline = [n["node_name"] for n in data["sensors"] if n.get("status") != "active"]
+            offline_note = f" Offline nodes: {', '.join(offline)}." if offline else ""
             return (
-                f"Surveillance fleet: {data['active_count']}/{data['total']} nodes active. "
-                f"Telemetry: {json.dumps(data['sensors'][:5], default=str)}"
+                f"Surveillance fleet: {data['active_count']}/{data['total']} sensor nodes reporting active."
+                f"{offline_note}"
             )
 
         tracks = cop_state.get("tracks", [])
