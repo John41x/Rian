@@ -31,8 +31,8 @@ This repository is organized to allow multiple specialized subagents to work in 
 | **00** | Contracts & Schemas | `specs/00-contracts-and-schemas.md` | None | `VERIFIED` | Orchestrator Core |
 | **01** | Ingestion & CV Inference | `specs/01-ingestion-inference.md` | Spec 00 | `VERIFIED` | Ingestion Agent |
 | **02** | Spatial Database & Rasters | `specs/02-spatial-database-rasters.md` | Spec 00 | `VERIFIED` | Geospatial DB Agent |
-| **03** | Kinematic Tracking Engine | `specs/03-kinematic-tracking-engine.md` | Spec 00, 02 | `IN_PROGRESS` | Algorithm & Math Agent |
-| **04** | Interception & Dispatch | `specs/04-tactical-interception-dispatch.md` | Spec 00, 02, 03 | `READY` | Tactical Dispatch Agent |
+| **03** | Kinematic Tracking Engine | `specs/03-kinematic-tracking-engine.md` | Spec 00, 02 | `VERIFIED` | Algorithm & Math Agent |
+| **04** | Interception & Dispatch | `specs/04-tactical-interception-dispatch.md` | Spec 00, 02, 03 | `VERIFIED` | Tactical Dispatch Agent |
 | **05** | Simulation & Validation Harness | `specs/05-simulation-harness.md` | Spec 00 | `VERIFIED` | QA & Simulation Agent |
 
 ### Status Definitions

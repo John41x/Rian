@@ -201,7 +201,7 @@ class SpatialService:
             entity_class=entity_class,
         )
 
-        transform = Affine.translation(center_lon, center_lat) * Affine.scale(
+        transform = Affine.translation(center_lon, center_lat) @ Affine.scale(
             resolution_m / 111320.0,
             resolution_m / 110540.0,
         )
