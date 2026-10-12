@@ -398,13 +398,17 @@ async def _fetch_sensors(session: AsyncSession) -> List[Dict[str, Any]]:
         SELECT
             id,
             node_name,
+            sender_email,
             ST_X(location) AS lon,
             ST_Y(location) AS lat,
             azimuth_deg,
             fov_angle,
+            detection_radius_m,
             is_active,
             battery_level,
-            last_heartbeat
+            solar_charging,
+            last_heartbeat,
+            created_at
         FROM sensor_nodes
         ORDER BY node_name
         """
@@ -416,21 +420,25 @@ async def _fetch_sensors(session: AsyncSession) -> List[Dict[str, Any]]:
     rows = []
     for row in result.mappings():
         active = bool(row["is_active"])
+        radius = float(row.get("detection_radius_m") or 25.0)
         rows.append(
             {
                 "id": str(row["id"]),
                 "node_name": row["node_name"],
+                "sender_email": row["sender_email"],
                 "location": [float(row["lon"]), float(row["lat"])],
                 "azimuth_deg": float(row["azimuth_deg"]),
                 "fov_angle": float(row["fov_angle"] or 85.0),
+                "detection_radius_m": radius,
                 "status": "active" if active else "offline",
                 "battery_level": row["battery_level"],
+                "solar_charging": bool(row.get("solar_charging")),
                 "fov_wedge": _fov_wedge_geojson(
                     float(row["lon"]),
                     float(row["lat"]),
                     float(row["azimuth_deg"]),
                     float(row["fov_angle"] or 85.0),
-                    25.0,
+                    radius,
                 ),
             }
         )
@@ -688,6 +696,8 @@ _COP_HTML = """<!DOCTYPE html>
     .entity-rich-tooltip .tt-title { color: #67e8f9; font-weight: 700; margin-bottom: 4px; }
     #entity-modal.open { display: flex; }
     #entity-modal { display: none; }
+    #camera-modal.open { display: flex; }
+    #camera-modal { display: none; }
     .zone-label-icon {
       background: transparent; border: none;
       font-family: 'JetBrains Mono', monospace; font-size: 9px;
@@ -1027,6 +1037,20 @@ _COP_HTML = """<!DOCTYPE html>
           <span class="text-[10px] text-sky-400">PERIMETER</span>
         </div>
         <div id="chokepoints-mini" class="grid grid-cols-2 gap-1 text-[10px] mono text-slate-400"></div>
+      </div>
+
+      <div id="camera-modal" class="absolute inset-0 z-[60] bg-slate-950/96 backdrop-blur-md rounded-xl border border-cyan-600/40 flex-col p-3 overflow-y-auto">
+        <div class="flex items-center justify-between mb-2">
+          <span class="mono text-xs font-bold text-cyan-300 tracking-wider">📷 CAMERA INSPECTOR</span>
+          <button type="button" onclick="closeCameraModal()" class="text-slate-400 hover:text-white text-lg px-1">✕</button>
+        </div>
+        <div id="camera-modal-loading" class="hidden flex items-center gap-2 text-xs mono text-cyan-400 py-6 justify-center">
+          <span class="inline-block w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span>
+          Loading camera telemetry...
+        </div>
+        <div id="camera-modal-body" class="space-y-3 text-xs">
+          <!-- Dynamic content rendered by JS -->
+        </div>
       </div>
     </aside>
 
@@ -2071,6 +2095,169 @@ _COP_HTML = """<!DOCTYPE html>
       currentSnapshotBoxes = [];
     }
 
+    let currentCameraModalId = null;
+
+    function copyToClipboard(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
+    }
+
+    function classBadgeColor(objectClass) {
+      const c = (objectClass || '').toLowerCase();
+      if (c === 'cow') return 'bg-amber-950 text-amber-200 border-amber-700/50';
+      if (c === 'truck') return 'bg-slate-800 text-slate-200 border-slate-600';
+      if (c === 'person') return 'bg-red-950 text-red-200 border-red-700/50';
+      if (c === 'coyote') return 'bg-orange-950 text-orange-200 border-orange-700/50';
+      return 'bg-cyan-950 text-cyan-200 border-cyan-700/50';
+    }
+
+    function renderCompassDial(azimuthDeg, fovAngle) {
+      const rot = azimuthDeg || 0;
+      const fov = fovAngle || 85;
+      return `
+        <div class="relative w-24 h-24 mx-auto">
+          <div class="absolute inset-0 rounded-full border-2 border-slate-600 bg-slate-900/80"></div>
+          <div class="absolute inset-2 rounded-full border border-slate-700"></div>
+          <div class="absolute top-1 left-1/2 -translate-x-1/2 text-[8px] mono text-slate-400">N</div>
+          <div class="absolute bottom-1 left-1/2 -translate-x-1/2 text-[8px] mono text-slate-500">S</div>
+          <div class="absolute left-1 top-1/2 -translate-y-1/2 text-[8px] mono text-slate-500">W</div>
+          <div class="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] mono text-slate-500">E</div>
+          <div class="absolute inset-0 flex items-center justify-center" style="transform: rotate(${rot}deg)">
+            <div class="w-0 h-0 border-l-[6px] border-r-[6px] border-b-[28px] border-l-transparent border-r-transparent border-b-cyan-400 opacity-90"></div>
+          </div>
+          <div class="absolute bottom-0 left-0 right-0 text-center text-[9px] mono text-cyan-300 pb-0.5">${rot}° · FOV ${fov}°</div>
+        </div>
+      `;
+    }
+
+    function formatEventTimestamp(iso) {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return iso;
+      const utc = d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+      const local = d.toLocaleString();
+      return `${utc} · ${local}`;
+    }
+
+    function renderCameraEventsTimeline(events, cameraId) {
+      if (!events || events.length === 0) {
+        return `
+          <div class="text-center py-4 text-slate-500 text-[10px] mono border border-slate-800 rounded-lg bg-slate-900/50">
+            No past detection events recorded yet.
+            <button type="button" onclick="runCameraMotionTest('${cameraId}')" class="mt-2 block mx-auto px-2 py-1 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 rounded border border-cyan-800 text-[10px] mono">Run Motion Test</button>
+          </div>
+        `;
+      }
+      return events.map(ev => {
+        const pct = Math.round((ev.confidence || 0) * 100);
+        const badge = classBadgeColor(ev.object_class);
+        const thumb = ev.snapshot_id
+          ? `<a href="${API_BASE}/api/v1/snapshots/${ev.snapshot_id}/image" target="_blank" rel="noopener" class="block mt-1"><img src="${API_BASE}/api/v1/snapshots/${ev.snapshot_id}/image" alt="snapshot" class="w-full max-h-20 object-cover rounded border border-slate-700" /></a>`
+          : (ev.raw_image_path ? `<div class="text-[9px] mono text-slate-500 mt-0.5 truncate">${ev.raw_image_path}</div>` : '');
+        return `
+          <div class="p-2 rounded border border-slate-800 bg-slate-900/60">
+            <div class="flex items-center justify-between gap-2">
+              <span class="mono text-[9px] text-slate-400">${formatEventTimestamp(ev.event_timestamp)}</span>
+              <span class="mono text-[9px] px-1.5 py-0.5 rounded border ${badge}">${(ev.object_class || 'unknown').toUpperCase()}</span>
+            </div>
+            <div class="text-[10px] mono text-slate-300 mt-1">Confidence: ${pct}%</div>
+            ${thumb}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderCameraModalBody(camera, events) {
+      const active = camera.status === 'active';
+      const lat = camera.location ? camera.location[1] : (camera.lat ?? 0);
+      const lon = camera.location ? camera.location[0] : (camera.lon ?? 0);
+      const batteryNum = typeof camera.battery_level === 'number' ? camera.battery_level : null;
+      const battery = batteryNum != null ? batteryNum : '—';
+      const solar = camera.solar_charging ? '☀️ Solar charging' : 'Grid / battery only';
+      const email = camera.sender_email || '—';
+      const coordText = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+      const eventsHtml = renderCameraEventsTimeline(events, camera.id);
+
+      document.getElementById('camera-modal-body').innerHTML = `
+        <div class="flex items-center justify-between">
+          <h3 class="mono font-bold text-slate-100">${camera.node_name}</h3>
+          <span class="text-[10px] mono px-1.5 py-0.5 rounded ${active ? 'bg-emerald-950 text-emerald-300' : 'bg-red-950 text-red-300'}">${active ? 'ACTIVE' : 'OFFLINE'}</span>
+        </div>
+        <div>
+          <div class="flex justify-between text-[10px] mono text-slate-400 mb-1"><span>Battery</span><span>${battery}%</span></div>
+          <div class="h-2 rounded-full bg-slate-800 overflow-hidden"><div class="h-full bg-emerald-500" style="width: ${batteryNum != null ? Math.min(100, Math.max(0, batteryNum)) : 0}%"></div></div>
+          <div class="text-[9px] mono text-amber-300/90 mt-1">${solar}</div>
+        </div>
+        <div>
+          <div class="text-[10px] mono text-slate-500 uppercase mb-0.5">Ingestion Email</div>
+          <div class="mono text-cyan-200 text-[11px] break-all">${email}</div>
+        </div>
+        <div>
+          <div class="text-[10px] mono text-slate-500 uppercase mb-0.5">WGS84 Coordinates</div>
+          <div class="text-[10px] mono text-slate-300">Lat ${lat.toFixed(6)} · Lon ${lon.toFixed(6)}</div>
+          <button type="button" onclick="copyToClipboard('${coordText}')" class="mt-1 text-[10px] mono text-cyan-400 hover:underline">Copy</button>
+        </div>
+        <div class="py-2">${renderCompassDial(camera.azimuth_deg, camera.fov_angle)}</div>
+        <div class="grid grid-cols-1 gap-1.5">
+          <button type="button" onclick="runCameraMotionTest('${camera.id}')" class="w-full py-1.5 mono text-[10px] font-bold bg-cyan-950 hover:bg-cyan-900 text-cyan-200 border border-cyan-700/50 rounded">⚡ Test Motion Probe</button>
+          <button type="button" onclick="flyToCoord(${lat}, ${lon}); closeCameraModal();" class="w-full py-1.5 mono text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded">📍 Center Map</button>
+          <button type="button" onclick="alert('Siren relay queued for ${camera.node_name} (simulation).')" class="w-full py-1.5 mono text-[10px] font-bold bg-red-950 hover:bg-red-900 text-red-200 border border-red-700/50 rounded">🔊 Trigger Siren</button>
+        </div>
+        <div class="border-t border-slate-800 pt-2">
+          <div class="mono text-[10px] font-bold text-cyan-300 mb-2">PAST RECORDED EVENTS</div>
+          <div class="space-y-2 max-h-48 overflow-y-auto">${eventsHtml}</div>
+        </div>
+      `;
+    }
+
+    async function fetchCameraEvents(cameraId) {
+      const resp = await fetch(`${API_BASE}/api/v1/cameras/${cameraId}/events`);
+      if (!resp.ok) return [];
+      return resp.json();
+    }
+
+    async function runCameraMotionTest(cameraId) {
+      await fetch(`${API_BASE}/api/v1/cameras/${cameraId}/test-probe`, { method: 'POST' });
+      await loadState();
+      const events = await fetchCameraEvents(cameraId);
+      const camera = (currentState.sensors || []).find(s => s.id === cameraId);
+      if (camera) renderCameraModalBody(camera, events);
+    }
+
+    async function openCameraModal(cameraId) {
+      currentCameraModalId = cameraId;
+      document.getElementById('camera-modal').classList.add('open');
+      document.getElementById('camera-modal-loading').classList.remove('hidden');
+      document.getElementById('camera-modal-body').innerHTML = '';
+
+      const stateCamera = (currentState.sensors || []).find(s => s.id === cameraId);
+      let camera = stateCamera;
+      try {
+        if (!camera) {
+          const resp = await fetch(`${API_BASE}/api/v1/cameras/${cameraId}`);
+          if (resp.ok) camera = await resp.json();
+        } else {
+          const resp = await fetch(`${API_BASE}/api/v1/cameras/${cameraId}`);
+          if (resp.ok) camera = { ...(await resp.json()), ...stateCamera };
+        }
+        const events = await fetchCameraEvents(cameraId);
+        if (camera) {
+          renderCameraModalBody(camera, events);
+        } else {
+          document.getElementById('camera-modal-body').innerHTML = '<div class="text-red-400 mono text-xs">Camera not found.</div>';
+        }
+      } catch (err) {
+        document.getElementById('camera-modal-body').innerHTML = '<div class="text-red-400 mono text-xs">Failed to load camera telemetry.</div>';
+      } finally {
+        document.getElementById('camera-modal-loading').classList.add('hidden');
+      }
+    }
+
+    function closeCameraModal() {
+      document.getElementById('camera-modal').classList.remove('open');
+      currentCameraModalId = null;
+    }
+
     let currentEntitySnapshotId = null;
     let currentSnapshotBoxes = [];
 
@@ -2340,7 +2527,7 @@ _COP_HTML = """<!DOCTYPE html>
       const sensorsListHtml = sensors.map(s => {
         const active = s.status === 'active';
         return `
-          <div class="p-2 rounded bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 transition-colors flex items-center justify-between">
+          <div class="p-2 rounded bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 transition-colors flex items-center justify-between cursor-pointer" onclick="openCameraModal('${s.id}')">
             <div>
               <div class="font-bold text-slate-200 mono flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-full ${active ? 'bg-emerald-400' : 'bg-red-400'}"></span>
@@ -2350,7 +2537,7 @@ _COP_HTML = """<!DOCTYPE html>
             </div>
             <div class="text-right">
               <span class="text-[10px] mono px-1.5 py-0.5 rounded ${active ? 'bg-emerald-950 text-emerald-300' : 'bg-red-950 text-red-300'}">${s.status.toUpperCase()}</span>
-              <button onclick="flyToCoord(${s.location[1]}, ${s.location[0]})" class="block text-[10px] text-cyan-400 hover:underline mt-1">Locate</button>
+              <button type="button" onclick="event.stopPropagation(); flyToCoord(${s.location[1]}, ${s.location[0]})" class="block text-[10px] text-cyan-400 hover:underline mt-1">Locate</button>
             </div>
           </div>
         `;
@@ -2367,6 +2554,7 @@ _COP_HTML = """<!DOCTYPE html>
           weight: 2
         }).addTo(layers.sensors);
         marker.bindPopup(`<b>${s.node_name}</b><br>Status: ${s.status}<br>Azimuth: ${s.azimuth_deg}°`);
+        marker.on('click', (e) => { L.DomEvent.stopPropagation(e); openCameraModal(s.id); });
 
         if (s.fov_wedge) {
           const ring = s.fov_wedge.coordinates[0].map(c => [c[1], c[0]]);
@@ -2376,7 +2564,7 @@ _COP_HTML = """<!DOCTYPE html>
             fillOpacity: 0.18,
             weight: 1.5,
             dashArray: '3, 4'
-          }).addTo(layers.sensors);
+          }).addTo(layers.sensors).on('click', (e) => { L.DomEvent.stopPropagation(e); openCameraModal(s.id); });
         }
       });
 

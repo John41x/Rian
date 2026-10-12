@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -9,8 +10,10 @@ from uuid import uuid4
 import psycopg
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
 from src.common.config import settings
+from src.common.database import async_session_factory
 from src.common.schemas import EntityClass, TrackState, TrackStatus
 from src.web.app import _fov_wedge_geojson, create_app
 
@@ -180,3 +183,67 @@ async def test_test_probe_triggers_detection_event(client, unique_camera_payload
     assert data["tracks"][0]["track_code"] == "TRK-PROBE-001"
     assert data["directive_status"] == "evaluated"
     mock_engine.handle_detection_event.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_camera_by_id(client, unique_camera_payload):
+    create_resp = await client.post("/api/v1/cameras", json=unique_camera_payload)
+    camera_id = create_resp.json()["id"]
+
+    get_resp = await client.get(f"/api/v1/cameras/{camera_id}")
+    assert get_resp.status_code == 200
+    body = get_resp.json()
+    assert body["id"] == camera_id
+    assert body["node_name"] == unique_camera_payload["node_name"]
+    assert body["sender_email"] == unique_camera_payload["sender_email"]
+
+    missing = await client.get(f"/api/v1/cameras/{uuid4()}")
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_camera_events(client, unique_camera_payload):
+    create_resp = await client.post("/api/v1/cameras", json=unique_camera_payload)
+    camera_id = create_resp.json()["id"]
+    event_id = uuid4()
+    now = datetime.now(timezone.utc)
+
+    async with async_session_factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO detection_events (
+                    id, sensor_id, event_timestamp, object_class, confidence,
+                    bounding_box, raw_image_path, processed_latency_ms
+                )
+                VALUES (
+                    :id, :sensor_id, :event_timestamp, :object_class, :confidence,
+                    CAST(:bounding_box AS jsonb), :raw_image_path, :processed_latency_ms
+                )
+                """
+            ),
+            {
+                "id": str(event_id),
+                "sensor_id": camera_id,
+                "event_timestamp": now,
+                "object_class": "person",
+                "confidence": 0.88,
+                "bounding_box": json.dumps([0.1, 0.2, 0.5, 0.6]),
+                "raw_image_path": "events/test.jpg",
+                "processed_latency_ms": 12,
+            },
+        )
+        await session.commit()
+
+    events_resp = await client.get(f"/api/v1/cameras/{camera_id}/events")
+    assert events_resp.status_code == 200
+    events = events_resp.json()
+    assert isinstance(events, list)
+    assert len(events) >= 1
+    match = next(e for e in events if e["id"] == str(event_id))
+    assert match["object_class"] == "person"
+    assert match["confidence"] == 0.88
+    assert match["processed_latency_ms"] == 12
+
+    missing = await client.get(f"/api/v1/cameras/{uuid4()}/events")
+    assert missing.status_code == 404

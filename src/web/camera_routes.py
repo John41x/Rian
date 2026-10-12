@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +48,17 @@ class CameraDetailResponse(BaseModel):
     status: str
     battery_level: Optional[int]
     fov_wedge: Optional[Dict[str, Any]]
+
+
+class CameraEventItem(BaseModel):
+    id: str
+    event_timestamp: datetime
+    object_class: str
+    confidence: float
+    bounding_box: Optional[List[float]] = None
+    raw_image_path: Optional[str] = None
+    processed_latency_ms: Optional[int] = None
+    snapshot_id: Optional[str] = None
 
 
 def _fov_wedge_for_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -101,6 +112,85 @@ async def _fetch_camera(session: AsyncSession, camera_id: UUID) -> Optional[Dict
     )
     row = result.mappings().first()
     return dict(row) if row else None
+
+
+def _bbox_from_row(raw: Any) -> Optional[List[float]]:
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        return [float(x) for x in raw]
+    if isinstance(raw, dict):
+        return [
+            float(raw.get("ymin", 0)),
+            float(raw.get("xmin", 0)),
+            float(raw.get("ymax", 0)),
+            float(raw.get("xmax", 0)),
+        ]
+    return None
+
+
+def _event_row_to_item(row: Dict[str, Any]) -> CameraEventItem:
+    from src.ingestion.vlm_inspector import get_vlm_inspector
+
+    event_id = row["id"]
+    event_uuid = event_id if isinstance(event_id, UUID) else UUID(str(event_id))
+    snapshot_id: Optional[str] = None
+    if get_vlm_inspector().get_snapshot(event_uuid) is not None:
+        snapshot_id = str(event_uuid)
+
+    return CameraEventItem(
+        id=str(event_id),
+        event_timestamp=row["event_timestamp"],
+        object_class=str(row["object_class"]),
+        confidence=float(row["confidence"]),
+        bounding_box=_bbox_from_row(row.get("bounding_box")),
+        raw_image_path=row.get("raw_image_path"),
+        processed_latency_ms=row.get("processed_latency_ms"),
+        snapshot_id=snapshot_id,
+    )
+
+
+@router.get("/api/v1/cameras/{camera_id}", response_model=CameraDetailResponse)
+async def get_camera(camera_id: UUID) -> CameraDetailResponse:
+    async with async_session_factory() as session:
+        row = await _fetch_camera(session, camera_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found")
+    return _row_to_camera_response(row)
+
+
+@router.get("/api/v1/cameras/{camera_id}/events", response_model=List[CameraEventItem])
+async def list_camera_events(
+    camera_id: UUID,
+    limit: int = Query(20, ge=1, le=100),
+) -> List[CameraEventItem]:
+    async with async_session_factory() as session:
+        existing = await _fetch_camera(session, camera_id)
+        if not existing:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found")
+
+        result = await session.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    event_timestamp,
+                    object_class,
+                    confidence,
+                    bounding_box,
+                    raw_image_path,
+                    processed_latency_ms
+                FROM detection_events
+                WHERE sensor_id = :camera_id
+                ORDER BY event_timestamp DESC
+                LIMIT :limit
+                """
+            ),
+            {"camera_id": str(camera_id), "limit": limit},
+        )
+        rows = [dict(r) for r in result.mappings().all()]
+
+    return [_event_row_to_item(row) for row in rows]
 
 
 @router.get("/api/v1/cameras", response_model=List[CameraDetailResponse])
